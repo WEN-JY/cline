@@ -1,10 +1,13 @@
-import { memo, useEffect } from "react"
+import React, { memo, useEffect } from "react"
+import type { ComponentProps } from "react"
 import { useRemark } from "react-remark"
 import rehypeHighlight, { Options } from "rehype-highlight"
 import styled from "styled-components"
 import { visit } from "unist-util-visit"
-import { useExtensionState } from "../../context/ExtensionStateContext"
-import { CODE_BLOCK_BG_COLOR } from "./CodeBlock"
+import type { Node } from "unist"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
+import MermaidBlock from "@/components/common/MermaidBlock"
 
 interface MarkdownBlockProps {
 	markdown?: string
@@ -19,7 +22,7 @@ interface MarkdownBlockProps {
  * This caused the entire content to disappear because the structure became invalid.
  */
 const remarkUrlToLink = () => {
-	return (tree: any) => {
+	return (tree: Node) => {
 		// Visit all "text" nodes in the markdown AST (Abstract Syntax Tree)
 		visit(tree, "text", (node: any, index, parent) => {
 			const urlRegex = /https?:\/\/[^\s<>)"]+/g
@@ -220,7 +223,27 @@ const MarkdownBlock = memo(({ markdown }: MarkdownBlockProps) => {
 		],
 		rehypeReactOptions: {
 			components: {
-				pre: ({ node, ...preProps }: any) => <StyledPre {...preProps} theme={theme} />,
+				pre: ({ node, children, ...preProps }: any) => {
+					if (Array.isArray(children) && children.length === 1 && React.isValidElement(children[0])) {
+						const child = children[0] as React.ReactElement<{ className?: string }>
+						if (child.props?.className?.includes("language-mermaid")) {
+							return child
+						}
+					}
+					return (
+						<StyledPre {...preProps} theme={theme}>
+							{children}
+						</StyledPre>
+					)
+				},
+				code: (props: ComponentProps<"code">) => {
+					const className = props.className || ""
+					if (className.includes("language-mermaid")) {
+						const codeText = String(props.children || "")
+						return <MermaidBlock code={codeText} />
+					}
+					return <code {...props} />
+				},
 			},
 		},
 	})

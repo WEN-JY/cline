@@ -1,11 +1,14 @@
 import { VSCodeButton, VSCodeTextField, VSCodeRadioGroup, VSCodeRadio } from "@vscode/webview-ui-toolkit/react"
-import { useExtensionState } from "../../context/ExtensionStateContext"
-import { vscode } from "../../utils/vscode"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { vscode } from "@/utils/vscode"
 import { Virtuoso } from "react-virtuoso"
-import { memo, useMemo, useState, useEffect } from "react"
+import { memo, useMemo, useState, useEffect, useCallback } from "react"
 import Fuse, { FuseResult } from "fuse.js"
-import { formatLargeNumber } from "../../utils/format"
-import { formatSize } from "../../utils/size"
+import { formatLargeNumber } from "@/utils/format"
+import { formatSize } from "@/utils/format"
+import { ExtensionMessage } from "@shared/ExtensionMessage"
+import { useEvent } from "react-use"
+import DangerButton from "@/components/common/DangerButton"
 
 type HistoryViewProps = {
 	onDone: () => void
@@ -14,10 +17,23 @@ type HistoryViewProps = {
 type SortOption = "newest" | "oldest" | "mostExpensive" | "mostTokens" | "mostRelevant"
 
 const HistoryView = ({ onDone }: HistoryViewProps) => {
-	const { taskHistory } = useExtensionState()
+	const { taskHistory, totalTasksSize } = useExtensionState()
 	const [searchQuery, setSearchQuery] = useState("")
 	const [sortOption, setSortOption] = useState<SortOption>("newest")
 	const [lastNonRelevantSort, setLastNonRelevantSort] = useState<SortOption | null>("newest")
+	const [deleteAllDisabled, setDeleteAllDisabled] = useState(false)
+
+	const handleMessage = useCallback((event: MessageEvent<ExtensionMessage>) => {
+		if (event.data.type === "relinquishControl") {
+			setDeleteAllDisabled(false)
+		}
+	}, [])
+	useEvent("message", handleMessage)
+
+	// Request total tasks size when component mounts
+	useEffect(() => {
+		vscode.postMessage({ type: "requestTotalTasksSize" })
+	}, [])
 
 	useEffect(() => {
 		if (searchQuery && sortOption !== "mostRelevant" && !lastNonRelevantSort) {
@@ -29,15 +45,15 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 		}
 	}, [searchQuery, sortOption, lastNonRelevantSort])
 
-	const handleHistorySelect = (id: string) => {
+	const handleHistorySelect = useCallback((id: string) => {
 		vscode.postMessage({ type: "showTaskWithId", text: id })
-	}
+	}, [])
 
-	const handleDeleteHistoryItem = (id: string) => {
+	const handleDeleteHistoryItem = useCallback((id: string) => {
 		vscode.postMessage({ type: "deleteTaskWithId", text: id })
-	}
+	}, [])
 
-	const formatDate = (timestamp: number) => {
+	const formatDate = useCallback((timestamp: number) => {
 		const date = new Date(timestamp)
 		return date
 			?.toLocaleString("en-US", {
@@ -50,7 +66,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 			.replace(", ", " ")
 			.replace(" at", ",")
 			.toUpperCase()
-	}
+	}, [])
 
 	const presentableTasks = useMemo(() => {
 		return taskHistory.filter((item) => item.ts && item.task)
@@ -69,7 +85,7 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 	}, [presentableTasks])
 
 	const taskHistorySearchResults = useMemo(() => {
-		let results = searchQuery ? highlight(fuse.search(searchQuery)) : presentableTasks
+		const results = searchQuery ? highlight(fuse.search(searchQuery)) : presentableTasks
 
 		results.sort((a, b) => {
 			switch (sortOption) {
@@ -446,6 +462,21 @@ const HistoryView = ({ onDone }: HistoryViewProps) => {
 							</div>
 						)}
 					/>
+				</div>
+				<div
+					style={{
+						padding: "10px 10px",
+						borderTop: "1px solid var(--vscode-panel-border)",
+					}}>
+					<DangerButton
+						style={{ width: "100%" }}
+						disabled={deleteAllDisabled || taskHistory.length === 0}
+						onClick={() => {
+							setDeleteAllDisabled(true)
+							vscode.postMessage({ type: "clearAllTaskHistory" })
+						}}>
+						Delete All History{totalTasksSize !== null ? ` (${formatSize(totalTasksSize)})` : ""}
+					</DangerButton>
 				</div>
 			</div>
 		</>

@@ -1,14 +1,15 @@
 import { VSCodeButton } from "@vscode/webview-ui-toolkit/react"
 import React, { memo, useEffect, useMemo, useRef, useState } from "react"
 import { useWindowSize } from "react-use"
-import { mentionRegexGlobal } from "../../../../src/shared/context-mentions"
-import { ClineMessage } from "../../../../src/shared/ExtensionMessage"
-import { useExtensionState } from "../../context/ExtensionStateContext"
-import { formatLargeNumber } from "../../utils/format"
-import { formatSize } from "../../utils/size"
-import { vscode } from "../../utils/vscode"
-import Thumbnails from "../common/Thumbnails"
-import { normalizeApiConfiguration } from "../settings/ApiOptions"
+import { mentionRegexGlobal } from "@shared/context-mentions"
+import { ClineMessage } from "@shared/ExtensionMessage"
+import { useExtensionState } from "@/context/ExtensionStateContext"
+import { formatLargeNumber } from "@/utils/format"
+import { formatSize } from "@/utils/format"
+import { vscode } from "@/utils/vscode"
+import Thumbnails from "@/components/common/Thumbnails"
+import { normalizeApiConfiguration } from "@/components/settings/ApiOptions"
+import { validateSlashCommand } from "@/utils/slash-commands"
 
 interface TaskHeaderProps {
 	task: ClineMessage
@@ -34,7 +35,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	onClose,
 }) => {
 	const { apiConfiguration, currentTaskItem, checkpointTrackerErrorMessage } = useExtensionState()
-	const [isTaskExpanded, setIsTaskExpanded] = useState(true)
+	const [isTaskExpanded, setIsTaskExpanded] = useState(false)
 	const [isTextExpanded, setIsTextExpanded] = useState(false)
 	const [showSeeMore, setShowSeeMore] = useState(false)
 	const textContainerRef = useRef<HTMLDivElement>(null)
@@ -42,6 +43,22 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 
 	const { selectedModelInfo } = useMemo(() => normalizeApiConfiguration(apiConfiguration), [apiConfiguration])
 	const contextWindow = selectedModelInfo?.contextWindow
+
+	// Open task header when checkpoint tracker error message is set
+	const prevErrorMessageRef = useRef(checkpointTrackerErrorMessage)
+	useEffect(() => {
+		if (checkpointTrackerErrorMessage !== prevErrorMessageRef.current) {
+			setIsTaskExpanded(true)
+			prevErrorMessageRef.current = checkpointTrackerErrorMessage
+		}
+	}, [checkpointTrackerErrorMessage])
+
+	// Reset isTextExpanded when task is collapsed
+	useEffect(() => {
+		if (!isTaskExpanded) {
+			setIsTextExpanded(false)
+		}
+	}, [isTaskExpanded])
 
 	/*
 	When dealing with event listeners in React components that depend on state variables, we face a challenge. We want our listener to always use the most up-to-date version of a callback function that relies on current state, but we don't want to constantly add and remove event listeners as that function updates. This scenario often arises with resize listeners or other window events. Simply adding the listener in a useEffect with an empty dependency array risks using stale state, while including the callback in the dependencies can lead to unnecessary re-registrations of the listener. There are react hook libraries that provide a elegant solution to this problem by utilizing the useRef hook to maintain a reference to the latest callback function without triggering re-renders or effect re-runs. This approach ensures that our event listener always has access to the most current state while minimizing performance overhead and potential memory leaks from multiple listener registrations. 
@@ -85,19 +102,22 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	}, [isTextExpanded, windowHeight])
 
 	useEffect(() => {
-		if (textRef.current && textContainerRef.current) {
-			let textContainerHeight = textContainerRef.current.clientHeight
-			if (!textContainerHeight) {
-				textContainerHeight = textContainerRef.current.getBoundingClientRect().height
-			}
-			const isOverflowing = textRef.current.scrollHeight > textContainerHeight
-			// necessary to show see more button again if user resizes window to expand and then back to collapse
-			if (!isOverflowing) {
-				setIsTextExpanded(false)
-			}
-			setShowSeeMore(isOverflowing)
+		if (isTaskExpanded && textRef.current && textContainerRef.current) {
+			// Use requestAnimationFrame to ensure DOM is fully updated
+			requestAnimationFrame(() => {
+				// Check if refs are still valid
+				if (textRef.current && textContainerRef.current) {
+					let textContainerHeight = textContainerRef.current.clientHeight
+					if (!textContainerHeight) {
+						textContainerHeight = textContainerRef.current.getBoundingClientRect().height
+					}
+					const isOverflowing = textRef.current.scrollHeight > textContainerHeight
+
+					setShowSeeMore(isOverflowing)
+				}
+			})
 		}
-	}, [task.text, windowWidth])
+	}, [task.text, windowWidth, isTaskExpanded])
 
 	const isCostAvailable = useMemo(() => {
 		const openAiCompatHasPricing =
@@ -115,7 +135,8 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 		)
 	}, [apiConfiguration?.apiProvider, apiConfiguration?.openAiModelInfo])
 
-	const shouldShowPromptCacheInfo = doesModelSupportPromptCache && apiConfiguration?.apiProvider !== "openrouter"
+	const shouldShowPromptCacheInfo =
+		doesModelSupportPromptCache && apiConfiguration?.apiProvider !== "openrouter" && apiConfiguration?.apiProvider !== "cline"
 
 	const ContextWindowComponent = (
 		<>
@@ -234,7 +255,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 								Task
 								{!isTaskExpanded && ":"}
 							</span>
-							{!isTaskExpanded && <span style={{ marginLeft: 4 }}>{highlightMentions(task.text, false)}</span>}
+							{!isTaskExpanded && <span style={{ marginLeft: 4 }}>{highlightText(task.text, false)}</span>}
 						</div>
 					</div>
 					{!isTaskExpanded && isCostAvailable && (
@@ -280,7 +301,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 									wordBreak: "break-word",
 									overflowWrap: "anywhere",
 								}}>
-								{highlightMentions(task.text, false)}
+								{highlightText(task.text, false)}
 							</div>
 							{!isTextExpanded && showSeeMore && (
 								<div
@@ -385,49 +406,52 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 								)}
 							</div>
 
-							{shouldShowPromptCacheInfo && (cacheReads !== undefined || cacheWrites !== undefined) && (
-								<div
-									style={{
-										display: "flex",
-										alignItems: "center",
-										gap: "4px",
-										flexWrap: "wrap",
-									}}>
-									<span style={{ fontWeight: "bold" }}>Cache:</span>
-									<span
+							{shouldShowPromptCacheInfo &&
+								(cacheReads !== undefined ||
+									cacheWrites !== undefined ||
+									apiConfiguration?.apiProvider === "anthropic") && (
+									<div
 										style={{
 											display: "flex",
 											alignItems: "center",
-											gap: "3px",
+											gap: "4px",
+											flexWrap: "wrap",
 										}}>
-										<i
-											className="codicon codicon-database"
+										<span style={{ fontWeight: "bold" }}>Cache:</span>
+										<span
 											style={{
-												fontSize: "12px",
-												fontWeight: "bold",
-												marginBottom: "-1px",
-											}}
-										/>
-										+{formatLargeNumber(cacheWrites || 0)}
-									</span>
-									<span
-										style={{
-											display: "flex",
-											alignItems: "center",
-											gap: "3px",
-										}}>
-										<i
-											className="codicon codicon-arrow-right"
+												display: "flex",
+												alignItems: "center",
+												gap: "3px",
+											}}>
+											<i
+												className="codicon codicon-database"
+												style={{
+													fontSize: "12px",
+													fontWeight: "bold",
+													marginBottom: "-1px",
+												}}
+											/>
+											+{formatLargeNumber(cacheWrites || 0)}
+										</span>
+										<span
 											style={{
-												fontSize: "12px",
-												fontWeight: "bold",
-												marginBottom: 0,
-											}}
-										/>
-										{formatLargeNumber(cacheReads || 0)}
-									</span>
-								</div>
-							)}
+												display: "flex",
+												alignItems: "center",
+												gap: "3px",
+											}}>
+											<i
+												className="codicon codicon-arrow-right"
+												style={{
+													fontSize: "12px",
+													fontWeight: "bold",
+													marginBottom: 0,
+												}}
+											/>
+											{formatLargeNumber(cacheReads || 0)}
+										</span>
+									</div>
+								)}
 							{ContextWindowComponent}
 							{isCostAvailable && (
 								<div
@@ -460,7 +484,25 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 									}}>
 									<i className="codicon codicon-warning" />
 									<span>
-										{checkpointTrackerErrorMessage}
+										{checkpointTrackerErrorMessage.replace(/disabling checkpoints\.$/, "")}
+										{checkpointTrackerErrorMessage.endsWith("disabling checkpoints.") && (
+											<>
+												<a
+													onClick={() => {
+														vscode.postMessage({
+															type: "openExtensionSettings",
+															text: "enableCheckpoints",
+														})
+													}}
+													style={{
+														color: "inherit",
+														textDecoration: "underline",
+														cursor: "pointer",
+													}}>
+													disabling checkpoints.
+												</a>
+											</>
+										)}
 										{checkpointTrackerErrorMessage.includes("Git must be installed to use checkpoints.") && (
 											<>
 												{" "}
@@ -513,9 +555,41 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	)
 }
 
-export const highlightMentions = (text?: string, withShadow = true) => {
-	if (!text) return text
+/**
+ * Highlights slash-command in this text if it exists
+ */
+const highlightSlashCommands = (text: string, withShadow = true) => {
+	const match = text.match(/^\s*\/([a-zA-Z0-9_-]+)(\s*|$)/)
+	if (!match) {
+		return text
+	}
+
+	const commandName = match[1]
+	const validationResult = validateSlashCommand(commandName)
+
+	if (!validationResult || validationResult !== "full") {
+		return text
+	}
+
+	const commandEndIndex = match[0].length
+	const beforeCommand = text.substring(0, text.indexOf("/"))
+	const afterCommand = match[2] + text.substring(commandEndIndex)
+
+	return [
+		beforeCommand,
+		<span key="slashCommand" className={withShadow ? "mention-context-highlight-with-shadow" : "mention-context-highlight"}>
+			/{commandName}
+		</span>,
+		afterCommand,
+	]
+}
+
+/**
+ * Highlights & formats all mentions inside this text
+ */
+export const highlightMentions = (text: string, withShadow = true) => {
 	const parts = text.split(mentionRegexGlobal)
+
 	return parts.map((part, index) => {
 		if (index % 2 === 0) {
 			// This is regular text
@@ -533,6 +607,30 @@ export const highlightMentions = (text?: string, withShadow = true) => {
 			)
 		}
 	})
+}
+
+/**
+ * Handles parsing both mentions and slash-commands
+ */
+export const highlightText = (text?: string, withShadow = true) => {
+	if (!text) {
+		return text
+	}
+
+	const resultWithSlashHighlighting = highlightSlashCommands(text, withShadow)
+
+	if (resultWithSlashHighlighting === text) {
+		// no highlighting done
+		return highlightMentions(resultWithSlashHighlighting, withShadow)
+	}
+
+	if (Array.isArray(resultWithSlashHighlighting) && resultWithSlashHighlighting.length === 3) {
+		const [beforeCommand, commandElement, afterCommand] = resultWithSlashHighlighting as [string, JSX.Element, string]
+
+		return [beforeCommand, commandElement, ...highlightMentions(afterCommand, withShadow)]
+	}
+
+	return [text]
 }
 
 const DeleteButton: React.FC<{
