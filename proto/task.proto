@@ -97,6 +97,11 @@ message TaskItem {
   int32 tokens_out = 8;
   int32 cache_writes = 9;
   int32 cache_reads = 10;
+  optional string parent_id = 11;
+  repeated string child_task_ids = 12;
+  optional string status = 13; // 'pending' | 'running' | 'paused' | 'completed' | 'failed'
+  optional string active_child_task_id = 14;
+  optional string completion_criteria = 15; // 'allChildren' | 'anyChild' | 'manual'
 }
 
 // Request for ask response operation

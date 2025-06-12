@@ -1,3 +1,12 @@
+/*
+ * @Description:
+ * @version: 0.0.1
+ * @Company: alibaba.com
+ * @Author: 执无
+ * @Date: 2025-06-06 13:49:28
+ * @LastEditors: 执无
+ * @LastEditTime: 2025-06-12 09:48:17
+ */
 import styled from "styled-components"
 import { CODE_BLOCK_BG_COLOR } from "@/components/common/CodeBlock"
 import { TaskServiceClient } from "@/services/grpc-client"
@@ -61,6 +70,7 @@ export const OptionsButtons = ({
 							return
 						}
 						try {
+							console.log("Selected option:", option, "with input value:", inputValue)
 							await TaskServiceClient.askResponse({
 								responseType: "messageResponse",
 								text: option + (inputValue ? `: ${inputValue?.trim()}` : ""),

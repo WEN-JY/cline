@@ -228,7 +228,7 @@ Array of options here (optional), e.g. ["Option 1", "Option 2", "Option 3"]
 
 ## attempt_completion
 Description: After each tool use, the user will respond with the result of that tool use, i.e. if it succeeded or failed, along with any reasons for failure. Once you've received the results of tool uses and can confirm that the task is complete, use this tool to present the result of your work to the user. Optionally you may provide a CLI command to showcase the result of your work. The user may respond with feedback if they are not satisfied with the result, which you can use to make improvements and try again.
-IMPORTANT NOTE: This tool CANNOT be used until you've confirmed from the user that any previous tool uses were successful. Failure to do so will result in code corruption and system failure. Before using this tool, you must ask yourself in <thinking></thinking> tags if you've confirmed from the user that any previous tool uses were successful. If not, then DO NOT use this tool.
+IMPORTANT NOTE: This tool CANNOT be used until you've confirmed from the user that any previous tool uses were successful. Failure to do so will result in code corruption and system failure. Before using this tool, you must ask yourself in <thinking></thinking> tags if you've confirmed from the user that any previous tool uses were successful. If not, then DO NOT use this tool. is there are pending child tasks, then DO NOT use this tool.
 Parameters:
 - result: (required) The result of the task. Formulate this result in a way that is final and does not require further input from the user. Don't end your result with questions or offers for further assistance.
 - command: (optional) A CLI command to execute to show a live demo of the result to the user. For example, use \`open index.html\` to display a created html website, or \`open localhost:3000\` to display a locally running development server. But DO NOT use commands like \`echo\` or \`cat\` that merely print text. This command should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.
@@ -270,6 +270,33 @@ Parameters: None
 Usage:
 <load_mcp_documentation>
 </load_mcp_documentation>
+
+## new_child_task
+Description: 创建一个当前任务的子任务。创建后，父任务将暂停，直到此子任务完成。子任务会继承父任务的部分上下文，并专注于一个更具体的目标。
+Parameters:
+- child_task_prompt: (required) 子任务的详细描述或指令。
+- child_task_files: (optional) 与子任务直接相关的初始文件路径列表。
+- execute_immediately: (optional) 默认为 true。如果为 true，子任务创建后立即开始执行，父任务暂停。如果为 false，子任务创建后状态为待处理，父任务可以继续执行其他操作（如创建更多待处理的子任务）或稍后通过其他机制激活此子任务。
+Usage:
+<new_child_task>
+<child_task_prompt>子任务的详细描述</child_task_prompt>
+<child_task_files>["file1.js", "file2.js"]</child_task_files>
+<execute_immediately>true or false</execute_immediately>
+</new_child_task>
+
+## start_next_child_task
+Description: Start the next pending child task from the queue. This will pause the current parent task and begin execution of the next queued child task. Use this tool when you want to manually control the execution timing of pending child tasks.
+Parameters: None
+Usage:
+<start_next_child_task>
+</start_next_child_task>
+
+## view_pending_tasks
+Description: View the list of pending child tasks that are queued for execution. Shows task details including prompts, creation time, and associated files. Use this tool to check what child tasks are waiting to be executed.
+Parameters: None
+Usage:
+<view_pending_tasks>
+</view_pending_tasks>
 
 # Tool Use Examples
 

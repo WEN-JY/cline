@@ -35,7 +35,6 @@ import rehypeParse from "rehype-parse"
 import HomeHeader from "../welcome/HomeHeader"
 import AutoApproveBar from "./auto-approve-menu/AutoApproveBar"
 import { SuggestedTasks } from "../welcome/SuggestedTasks"
-
 interface ChatViewProps {
 	isHidden: boolean
 	showAnnouncement: boolean
@@ -93,7 +92,14 @@ export const MAX_IMAGES_AND_FILES_PER_MESSAGE = 20
 const QUICK_WINS_HISTORY_THRESHOLD = 300
 
 const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryView }: ChatViewProps) => {
-	const { version, clineMessages: messages, taskHistory, apiConfiguration, telemetrySetting } = useExtensionState()
+	const {
+		version,
+		clineMessages: messages,
+		taskHistory,
+		apiConfiguration,
+		telemetrySetting,
+		currentTaskItem,
+	} = useExtensionState()
 	const shouldShowQuickWins = false // !taskHistory || taskHistory.length < QUICK_WINS_HISTORY_THRESHOLD
 	//const task = messages.length > 0 ? (messages[0].say === "task" ? messages[0] : undefined) : undefined) : undefined
 	const task = useMemo(() => messages.at(0), [messages]) // leaving this less safe version here since if the first message is not a task, then the extension is in a bad state and needs to be debugged (see Cline.abort)
@@ -233,6 +239,7 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 		// if user finished a task, then start a new task with a new conversation history since in this moment that the extension is waiting for user response, the user could close the extension and the conversation history would be lost.
 		// basically as long as a task is active, the conversation history will be persisted
 		if (lastMessage) {
+			console.log("last message", lastMessage)
 			switch (lastMessage.type) {
 				case "ask":
 					const isPartial = lastMessage.partial === true
@@ -1115,18 +1122,35 @@ const ChatView = ({ isHidden, showAnnouncement, hideAnnouncement, showHistoryVie
 				overflow: "hidden",
 			}}>
 			{task ? (
-				<TaskHeader
-					task={task}
-					tokensIn={apiMetrics.totalTokensIn}
-					tokensOut={apiMetrics.totalTokensOut}
-					doesModelSupportPromptCache={selectedModelInfo.supportsPromptCache}
-					cacheWrites={apiMetrics.totalCacheWrites}
-					cacheReads={apiMetrics.totalCacheReads}
-					totalCost={apiMetrics.totalCost}
-					lastApiReqTotalTokens={lastApiReqTotalTokens}
-					onClose={handleTaskCloseButtonClick}
-					onScrollToMessage={scrollToMessage}
-				/>
+				<>
+					<TaskHeader
+						task={task}
+						tokensIn={apiMetrics.totalTokensIn}
+						tokensOut={apiMetrics.totalTokensOut}
+						doesModelSupportPromptCache={selectedModelInfo.supportsPromptCache}
+						cacheWrites={apiMetrics.totalCacheWrites}
+						cacheReads={apiMetrics.totalCacheReads}
+						totalCost={apiMetrics.totalCost}
+						lastApiReqTotalTokens={lastApiReqTotalTokens}
+						onClose={handleTaskCloseButtonClick}
+						onScrollToMessage={scrollToMessage}
+						// 添加新的 props
+						currentTaskItem={currentTaskItem}
+						allTasks={taskHistory}
+					/>
+					{/* {currentTaskItem && (
+            <TaskHierarchy
+                currentTask={currentTaskItem}
+                allTasks={taskHistory}
+                onTaskClick={(taskId) => {
+                    vscode.postMessage({
+                        type: "showTaskWithId",
+                        text: taskId
+                    })
+                }}
+            />
+        )} */}
+				</>
 			) : (
 				<div
 					style={{

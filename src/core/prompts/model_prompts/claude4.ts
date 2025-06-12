@@ -69,6 +69,19 @@ Your file content here
 </content>
 </write_to_file>
 
+## new_child_task
+Description: 创建一个当前任务的子任务。创建后，父任务将暂停，直到此子任务完成。子任务会继承父任务的部分上下文，并专注于一个更具体的目标。
+Parameters:
+- child_task_prompt: (required) 子任务的详细描述或指令。
+- child_task_files: (optional) 与子任务直接相关的初始文件路径列表。
+- execute_immediately: (optional) 默认为 true。如果为 true，子任务创建后立即开始执行，父任务暂停。如果为 false，子任务创建后状态为待处理，父任务可以继续执行其他操作（如创建更多待处理的子任务）或稍后通过其他机制激活此子任务。
+Usage:
+<new_child_task>
+<child_task_prompt>子任务的详细描述</child_task_prompt>
+<child_task_files>["file1.js", "file2.js"]</child_task_files>
+<execute_immediately>true or false</execute_immediately>
+</new_child_task>
+
 ## replace_in_file
 
 "Description: Return your edits as a JSON object with a "replacements" array. Each replacement should have "old_str" and "new_str" fields. The old_str must match exactly what's in the file (including whitespace, indentation and new lines). You can edit multiple lines, but please keep the replacements as simple as possible.

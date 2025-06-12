@@ -142,8 +142,46 @@ export class Controller {
 		await updateGlobalState(this.context, "userInfo", info)
 	}
 
-	async initTask(task?: string, images?: string[], files?: string[], historyItem?: HistoryItem) {
+	async initTask(
+		task?: string,
+		images?: string[],
+		files?: string[],
+		historyItem?: HistoryItem,
+		parentIdForNewTask?: string,
+		childTaskId?: string, // 新增参数
+		executeImmediately: boolean = true, // 新增参数
+	) {
 		await this.clearTask() // ensures that an existing task doesn't exist before starting a new one, although this shouldn't be possible since user must clear task before starting a new one
+
+		let newTaskId: string | undefined
+		if (!historyItem && parentIdForNewTask) {
+			// This is a new child task
+			newTaskId = childTaskId || Date.now().toString() // 使用提供的childTaskId或生成新的
+
+			const parentTaskDetails = await this.getTaskWithId(parentIdForNewTask)
+			if (parentTaskDetails) {
+				const parentHistoryItem = parentTaskDetails.historyItem
+				if (parentHistoryItem) {
+					// 只有当executeImmediately为true时，才暂停父任务并设置活动子任务
+					if (executeImmediately) {
+						parentHistoryItem.status = "paused"
+						parentHistoryItem.activeChildTaskId = newTaskId
+						// 确保子任务ID在列表中
+						if (!parentHistoryItem.childTaskIds) {
+							parentHistoryItem.childTaskIds = []
+						}
+						if (!parentHistoryItem.childTaskIds.includes(newTaskId)) {
+							parentHistoryItem.childTaskIds.push(newTaskId)
+						}
+					}
+					// 注意：如果executeImmediately为false，我们不在这里修改父任务状态
+					// 因为子任务信息已经在executeNewChildTaskTool中存储到pendingChildTasks了
+
+					await this.updateTaskHistory(parentHistoryItem)
+				}
+			}
+		}
+
 		const {
 			apiConfiguration,
 			customInstructions,
@@ -191,7 +229,10 @@ export class Controller {
 			images,
 			files,
 			historyItem,
+			parentIdForNewTask,
+			newTaskId,
 		)
+		this.task.controller = this
 	}
 
 	async reinitExistingTaskFromId(taskId: string) {
@@ -438,7 +479,6 @@ export class Controller {
 					await this.initTask(title)
 				}
 				break
-
 			// Add more switch case statements here as more webview message commands
 			// are created within the webview context (i.e. inside media/main.js)
 		}
@@ -1025,6 +1065,7 @@ export class Controller {
 		if (id !== this.task?.taskId) {
 			// non-current task
 			const { historyItem } = await this.getTaskWithId(id)
+			historyItem.status = "running"
 			await this.initTask(undefined, undefined, undefined, historyItem) // clears existing task
 		}
 		await this.postMessageToWebview({
@@ -1101,22 +1142,88 @@ export class Controller {
 		console.info("deleteTaskWithId: ", id)
 
 		try {
-			if (id === this.task?.taskId) {
-				await this.clearTask()
-				console.debug("cleared task")
+			const taskToDeleteDetails = await this.getTaskWithId(id).catch(() => null)
+			if (!taskToDeleteDetails) {
+				console.warn(`Task ${id} not found for deletion.`)
+				await this.postStateToWebview()
+				return
 			}
-
 			const {
+				historyItem: taskToDeleteHistoryItem,
 				taskDirPath,
 				apiConversationHistoryFilePath,
 				uiMessagesFilePath,
 				contextHistoryFilePath,
 				taskMetadataFilePath,
-			} = await this.getTaskWithId(id)
-			const legacyMessagesFilePath = path.join(taskDirPath, "claude_messages.json")
-			const updatedTaskHistory = await this.deleteTaskFromState(id)
+			} = taskToDeleteDetails
 
-			// Delete the task files
+			if (id === this.task?.taskId) {
+				await this.clearTask()
+			}
+
+			// 处理父关系：如果此任务是子任务，则从其父任务的childTaskIds中移除它
+			if (taskToDeleteHistoryItem.parentId) {
+				try {
+					const parentTaskDetails = await this.getTaskWithId(taskToDeleteHistoryItem.parentId).catch(() => null)
+					if (parentTaskDetails) {
+						const parentHistoryItem = parentTaskDetails.historyItem
+						parentHistoryItem.childTaskIds = parentHistoryItem.childTaskIds?.filter((childId) => childId !== id) ?? []
+						if (parentHistoryItem.activeChildTaskId === id) {
+							parentHistoryItem.activeChildTaskId = undefined
+							// 如果父任务正在等待这个子任务，则将其设置为running
+							// 这假设一个简单的模型，即父任务暂停等待一个活动的子任务
+							if (parentHistoryItem.status === "paused") {
+								parentHistoryItem.status = "running"
+							}
+						}
+						await this.updateTaskHistory(parentHistoryItem)
+					}
+				} catch (error) {
+					console.error(
+						`Failed to update parent task ${taskToDeleteHistoryItem.parentId} during deletion of child ${id}:`,
+						error,
+					)
+				}
+			}
+
+			// 处理子关系：将此任务的任何子任务设为孤儿
+			// 处理子关系：将此任务的任何子任务设为孤儿
+			if (taskToDeleteHistoryItem.childTaskIds && taskToDeleteHistoryItem.childTaskIds.length > 0) {
+				for (const childId of taskToDeleteHistoryItem.childTaskIds) {
+					try {
+						const childTaskDetails = await this.getTaskWithId(childId).catch(() => null)
+						if (childTaskDetails) {
+							const childHistoryItem = childTaskDetails.historyItem
+							childHistoryItem.parentId = undefined // 将子任务设为孤儿
+
+							// 改进状态处理逻辑
+							if (childHistoryItem.status === "paused") {
+								// 如果子任务是因为等待父任务而暂停，则恢复为运行状态
+								childHistoryItem.status = "running"
+							} else if (childHistoryItem.status === "pending") {
+								// 如果子任务还未开始，保持 pending 状态
+								// 用户可以手动启动它
+							}
+							// 已完成或失败的任务保持原状态
+
+							await this.updateTaskHistory(childHistoryItem)
+
+							// 如果这个孤儿任务是当前活动任务，通知它父任务已被删除
+							// if (this.task?.taskId === childId) {
+							//     // 注入一个系统消息通知任务
+							//     if (typeof this.task.handleParentDeleted === 'function') {
+							//         this.task.handleParentDeleted()
+							//     }
+							// }
+						}
+					} catch (error) {
+						console.error(`Failed to orphan child task ${childId} during deletion of parent ${id}:`, error)
+					}
+				}
+			}
+
+			const legacyMessagesFilePath = path.join(taskDirPath, "claude_messages.json")
+			// 删除任务文件
 			for (const filePath of [
 				apiConversationHistoryFilePath,
 				uiMessagesFilePath,
@@ -1130,13 +1237,36 @@ export class Controller {
 				}
 			}
 
-			await fs.rmdir(taskDirPath) // succeeds if the dir is empty
+			// 尝试删除目录（如果为空或只包含.DS_Store）
+			try {
+				const filesInDir = await fs.readdir(taskDirPath)
+				if (filesInDir.length === 0 || (filesInDir.length === 1 && filesInDir[0] === ".DS_Store")) {
+					if (filesInDir.length === 1 && filesInDir[0] === ".DS_Store") {
+						await fs.unlink(path.join(taskDirPath, ".DS_Store"))
+					}
+					await fs.rmdir(taskDirPath)
+				} else {
+					console.warn(
+						`Task directory ${taskDirPath} not empty after attempting to delete files. Contains: ${filesInDir.join(", ")}`,
+					)
+				}
+			} catch (dirError) {
+				console.error(`Error removing task directory ${taskDirPath}:`, dirError)
+			}
+
+			// 在处理关系和文件后，从历史状态中删除任务
+			const updatedTaskHistory = await this.deleteTaskFromState(id)
 
 			if (updatedTaskHistory.length === 0) {
+				// 如果其他任务（如孤儿子任务）仍然存在，这可能太激进了
+				// 考虑如果*所有*任务都消失了，是否只调用deleteAllTaskHistory
+				// 目前，保留原始逻辑
 				await this.deleteAllTaskHistory()
 			}
 		} catch (error) {
-			console.debug(`Error deleting task:`, error)
+			// 这个顶级catch处理如果任务最初不存在，getTaskWithId的错误，
+			// 或其他意外错误
+			console.debug(`Error deleting task ${id}:`, error)
 		}
 
 		await this.postStateToWebview()
@@ -1228,6 +1358,7 @@ export class Controller {
 		if (this.task) {
 			await telemetryService.sendCollectedEvents(this.task.taskId)
 		}
+		console.debug("clearing task")
 		this.task?.abortTask()
 		this.task = undefined // removes reference to it, so once promises end it will be garbage collected
 	}
@@ -1273,6 +1404,33 @@ export class Controller {
 	// }
 
 	async updateTaskHistory(item: HistoryItem): Promise<HistoryItem[]> {
+		// 验证父子关系，防止循环引用
+		if (item.parentId) {
+			// 检查父任务是否存在
+			const history = ((await getGlobalState(this.context, "taskHistory")) as HistoryItem[]) || []
+			const parentTask = history.find((h) => h.id === item.parentId)
+
+			if (!parentTask) {
+				console.warn(`Parent task ${item.parentId} not found for task ${item.id}`)
+				item.parentId = undefined // 清除无效的父任务引用
+			} else {
+				// 检查是否会创建循环引用
+				let currentParent = parentTask
+				while (currentParent.parentId) {
+					if (currentParent.parentId === item.id) {
+						console.error(`Circular reference detected: task ${item.id} cannot have parent ${item.parentId}`)
+						item.parentId = undefined
+						break
+					}
+					currentParent = history.find((h) => h.id === currentParent.parentId) as any
+					if (!currentParent) {
+						break
+					}
+				}
+			}
+		}
+
+		// 原有的更新逻辑
 		const history = ((await getGlobalState(this.context, "taskHistory")) as HistoryItem[]) || []
 		const existingItemIndex = history.findIndex((h) => h.id === item.id)
 		if (existingItemIndex !== -1) {
@@ -1399,5 +1557,101 @@ Commit message:`
 		}
 	}
 
-	// dev
+	/**
+	 * 启动指定任务的下一个待执行子任务
+	 */
+	async startNextPendingChildTaskForParent(parentTaskId: string): Promise<boolean> {
+		try {
+			const parentTaskDetails = await this.getTaskWithId(parentTaskId)
+			if (
+				!parentTaskDetails?.historyItem.pendingChildTasks ||
+				parentTaskDetails.historyItem.pendingChildTasks.length === 0
+			) {
+				return false // 没有待执行的子任务
+			}
+
+			// 获取第一个待执行的子任务
+			const nextChildTask = parentTaskDetails.historyItem.pendingChildTasks[0]
+
+			// 从待执行列表中移除
+			parentTaskDetails.historyItem.pendingChildTasks.shift()
+
+			// 更新父任务状态
+			parentTaskDetails.historyItem.status = "paused"
+			parentTaskDetails.historyItem.activeChildTaskId = nextChildTask.id
+
+			// 确保子任务ID在列表中
+			if (!parentTaskDetails.historyItem.childTaskIds) {
+				parentTaskDetails.historyItem.childTaskIds = []
+			}
+			if (!parentTaskDetails.historyItem.childTaskIds.includes(nextChildTask.id)) {
+				parentTaskDetails.historyItem.childTaskIds.push(nextChildTask.id)
+			}
+
+			// 更新父任务历史项
+			await this.updateTaskHistory(parentTaskDetails.historyItem)
+
+			// 启动子任务
+			await this.initTask(
+				nextChildTask.prompt,
+				undefined, // images
+				nextChildTask.files, // files
+				undefined, // historyItem
+				parentTaskId, // parentIdForNewTask
+				nextChildTask.id, // childTaskId
+				true, // executeImmediately
+			)
+
+			return true // 成功启动了一个子任务
+		} catch (error) {
+			console.error("Failed to start next pending child task for parent:", error)
+			return false
+		}
+	}
+	/**
+	 * 处理子任务完成后的父任务恢复逻辑
+	 */
+	async handleChildTaskCompletion(childTaskId: string, parentTaskId: string): Promise<void> {
+		const parentTaskDetails = await this.getTaskWithId(parentTaskId)
+		if (!parentTaskDetails) {
+			console.error(`Parent task ${parentTaskId} not found`)
+			return
+		}
+
+		const parentHistoryItem = parentTaskDetails.historyItem
+
+		// 清除活动子任务ID
+		if (parentHistoryItem.activeChildTaskId === childTaskId) {
+			parentHistoryItem.activeChildTaskId = undefined
+		}
+
+		// 检查是否还有待执行的子任务
+		const hasMorePendingTasks = parentHistoryItem.pendingChildTasks && parentHistoryItem.pendingChildTasks.length > 0
+
+		if (hasMorePendingTasks) {
+			// 还有待执行的子任务，启动下一个
+			const started = await this.startNextPendingChildTaskForParent(parentTaskId)
+			if (!started) {
+				// 如果启动失败，恢复父任务为运行状态
+				parentHistoryItem.status = "running"
+				await this.updateTaskHistory(parentHistoryItem)
+			}
+		} else {
+			// 没有更多子任务，恢复父任务为运行状态
+			parentHistoryItem.status = "running"
+			await this.updateTaskHistory(parentHistoryItem)
+			console.log("没有更多子任务，恢复父任务为运行状态")
+			// 如果父任务是当前任务，通知它可以继续
+			// if (this.task?.taskId === parentTaskId) {
+			// 	// 注入完成消息到父任务
+			// 	if (this.task.userMessageContent) {
+			// 		this.postMessageToWebview({
+			// 			type: "text",
+			// 			text: `所有子任务已完成，父任务继续执行。`
+			// 		})
+			// 		this.task.userMessageContentReady = true
+			// 	}
+			// }
+		}
+	}
 }

@@ -105,6 +105,7 @@ import { processFilesIntoText } from "@integrations/misc/extract-text"
 import { featureFlagsService } from "@services/posthog/feature-flags/FeatureFlagsService"
 import { StreamingJsonReplacer, ChangeLocation } from "@core/assistant-message/diff-json"
 import { parseAssistantMessageV3 } from "../assistant-message/parse-assistant-message"
+import type { Controller } from "../controller"
 
 export const cwd =
 	vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
@@ -127,6 +128,16 @@ export class Task {
 	private cancelTask: () => Promise<void>
 
 	readonly taskId: string
+	private parentId?: string
+	private childTaskIds: string[] = []
+	private status?: HistoryItem["status"] = "running"
+	private activeChildTaskId?: string
+	private pendingChildTasks: Array<{
+		id: string
+		prompt: string
+		files?: string[]
+		createdAt: number
+	}> = []
 	private taskIsFavorited?: boolean
 	api: ApiHandler
 	private terminalManager: TerminalManager
@@ -166,6 +177,7 @@ export class Task {
 	// streaming
 	isWaitingForFirstChunk = false
 	isStreaming = false
+	controller: Controller | null = null // will be set by the controller that owns this task
 	private currentStreamingContentIndex = 0
 	private assistantMessageContent: AssistantMessageContent[] = []
 	private presentAssistantMessageLocked = false
@@ -198,6 +210,9 @@ export class Task {
 		images?: string[],
 		files?: string[],
 		historyItem?: HistoryItem,
+		// 新增参数，用于支持父子任务关系
+		parentId?: string,
+		childTaskId?: string,
 	) {
 		this.context = context
 		this.mcpHub = mcpHub
@@ -223,11 +238,22 @@ export class Task {
 
 		// Initialize taskId first
 		if (historyItem) {
-			this.taskId = historyItem.id
+			this.taskId = childTaskId || historyItem.id
 			this.taskIsFavorited = historyItem.isFavorited
 			this.conversationHistoryDeletedRange = historyItem.conversationHistoryDeletedRange
+			// 从 historyItem 初始化父子关系字段
+			this.parentId = historyItem.parentId
+			this.status = historyItem.status
+			this.childTaskIds = historyItem.childTaskIds || []
+			this.activeChildTaskId = historyItem.activeChildTaskId
+			this.pendingChildTasks = historyItem.pendingChildTasks || []
 		} else if (task || images || files) {
-			this.taskId = Date.now().toString()
+			this.taskId = childTaskId || Date.now().toString()
+			// 从参数初始化父子关系字段
+			this.parentId = parentId
+			this.childTaskIds = []
+			this.activeChildTaskId = undefined
+			this.pendingChildTasks = []
 		} else {
 			throw new Error("Either historyItem or task/images must be provided")
 		}
@@ -369,6 +395,12 @@ export class Task {
 				cwdOnTaskInitialization: cwd,
 				conversationHistoryDeletedRange: this.conversationHistoryDeletedRange,
 				isFavorited: this.taskIsFavorited,
+				// 添加父子关系字段
+				parentId: this.parentId,
+				childTaskIds: this.childTaskIds,
+				status: this.status,
+				activeChildTaskId: this.activeChildTaskId,
+				pendingChildTasks: this.pendingChildTasks,
 			})
 		} catch (error) {
 			console.error("Failed to save cline messages:", error)
@@ -842,8 +874,11 @@ export class Task {
 	}
 
 	async say(type: ClineSay, text?: string, images?: string[], files?: string[], partial?: boolean): Promise<undefined> {
+		if (this.status === "paused") {
+			return
+		}
 		if (this.abort) {
-			throw new Error("Cline instance aborted")
+			throw new Error("Cline instance aborted" + type + text + images + files + partial)
 		}
 
 		if (partial !== undefined) {
@@ -1043,6 +1078,47 @@ export class Task {
 
 		this.isInitialized = true
 
+		// 		// Check if this is a parent task that should auto-continue after child completion
+		// 		if (this.status === 'running' && !this.activeChildTaskId && this.parentId === undefined) {
+		// 			// This is a parent task that was set to running after child completion
+		// 			// Auto-continue without showing resume dialog
+		// const existingApiConversationHistory: Anthropic.Messages.MessageParam[] = await getSavedApiConversationHistory(
+		// 			this.getContext(),
+		// 			this.taskId,
+		// 		)
+
+		// 		// Remove the last user message so we can update it with the resume message
+		// 		let modifiedOldUserContent: UserContent // either the last message if its user message, or the user message before the last (assistant) message
+		// 		let modifiedApiConversationHistory: Anthropic.Messages.MessageParam[] // need to remove the last user message to replace with new modified user message
+		// 		if (existingApiConversationHistory.length > 0) {
+		// 			const lastMessage = existingApiConversationHistory[existingApiConversationHistory.length - 1]
+		// 			if (lastMessage.role === "assistant") {
+		// 				modifiedApiConversationHistory = [...existingApiConversationHistory]
+		// 				modifiedOldUserContent = []
+		// 			} else if (lastMessage.role === "user") {
+		// 				const existingUserContent: UserContent = Array.isArray(lastMessage.content)
+		// 					? lastMessage.content
+		// 					: [{ type: "text", text: lastMessage.content }]
+		// 				modifiedApiConversationHistory = existingApiConversationHistory.slice(0, -1)
+		// 				modifiedOldUserContent = [...existingUserContent]
+		// 			} else {
+		// 				throw new Error("Unexpected: Last message is not a user or assistant message")
+		// 			}
+		// 		} else {
+		// 			throw new Error("Unexpected: No existing API conversation history")
+		// 		}
+		// 			const continuationMessage = "子任务已完成，父任务继续执行。"
+
+		// 			let autoResumeUserContent: UserContent = [...modifiedOldUserContent]
+		// 			autoResumeUserContent.push({
+		// 				type: "text",
+		// 				text: continuationMessage,
+		// 			})
+
+		// 			await this.overwriteApiConversationHistory(modifiedApiConversationHistory)
+		// 			await this.initiateTaskLoop(autoResumeUserContent)
+		// 			return // Exit early, don't show resume dialog
+		// 		}
 		const { response, text, images, files } = await this.ask(askType) // calls poststatetowebview
 		let responseText: string | undefined
 		let responseImages: string[] | undefined
@@ -1151,6 +1227,16 @@ export class Task {
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.abort) {
+			// 检查是否被暂停
+			if (this.isPaused()) {
+				// 等待恢复或中止
+				await pWaitFor(() => !this.isPaused() || this.abort, { interval: 100 })
+
+				// 如果是因为 abort 而退出等待，则退出循环
+				if (this.abort) {
+					break
+				}
+			}
 			const didEndLoop = await this.recursivelyMakeClineRequests(nextUserContent, includeFileDetails)
 			includeFileDetails = false // we only need file details the first time
 
@@ -1866,9 +1952,17 @@ export class Task {
 		}
 	}
 
+	isPaused(): boolean {
+		return this.status === "paused"
+	}
 	async presentAssistantMessage() {
-		if (this.abort) {
+		if (this.abort && !this.isPaused()) {
 			throw new Error("Cline instance aborted")
+		}
+
+		// 如果任务被暂停，直接返回，不抛出错误
+		if (this.isPaused()) {
+			return
 		}
 
 		if (this.presentAssistantMessageLocked) {
@@ -1988,6 +2082,12 @@ export class Task {
 							return `[${block.name}]`
 						case "new_rule":
 							return `[${block.name} for '${block.params.path}']`
+						case "new_child_task":
+							return `[${block.name} for creating a sub-task with prompt: '${block.params.child_task_prompt}']`
+						case "start_next_child_task":
+							return `[${block.name}]`
+						case "view_pending_tasks":
+							return `[${block.name}]`
 					}
 				}
 
@@ -3771,6 +3871,176 @@ export class Task {
 							break
 						}
 					}
+					case "new_child_task": {
+						console.log("Handling new_child_task tool block")
+						const childTaskPrompt: string | undefined = block.params.child_task_prompt
+						const childTaskFilesRaw: string | undefined = block.params.child_task_files
+						const executeImmediatelyRaw: string | undefined = block.params.execute_immediately
+						const executeImmediately = executeImmediatelyRaw?.toLowerCase() !== "false"
+
+						let childTaskFiles: string[] | undefined
+						if (childTaskFilesRaw) {
+							try {
+								const parsedFiles = JSON.parse(childTaskFilesRaw)
+								if (Array.isArray(parsedFiles) && parsedFiles.every((item) => typeof item === "string")) {
+									childTaskFiles = parsedFiles
+								}
+							} catch (e) {
+								// Handle parsing error
+							}
+						}
+
+						const sharedMessageProps: ClineSayTool = {
+							tool: "newChildTask",
+							prompt: removeClosingTag("child_task_prompt", childTaskPrompt),
+							files: childTaskFiles,
+							executeImmediately: executeImmediately,
+						}
+
+						if (block.partial) {
+							const partialMessage = JSON.stringify(sharedMessageProps)
+							if (this.shouldAutoApproveTool(block.name)) {
+								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+								await this.say("tool", partialMessage, undefined, undefined, block.partial)
+							} else {
+								this.removeLastPartialMessageIfExistsWithType("say", "tool")
+								await this.ask("tool", partialMessage, block.partial).catch(() => {})
+							}
+							break
+						} else {
+							if (!childTaskPrompt) {
+								this.consecutiveMistakeCount++
+								pushToolResult(await this.sayAndCreateMissingParamError("new_child_task", "child_task_prompt"))
+								await this.saveCheckpoint()
+								break
+							}
+							this.consecutiveMistakeCount = 0
+
+							const completeMessage = JSON.stringify(sharedMessageProps)
+							if (this.shouldAutoApproveTool(block.name)) {
+								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+								await this.say("tool", completeMessage, undefined, undefined, false)
+								this.consecutiveAutoApprovedRequestsCount++
+								telemetryService.captureToolUsage(this.taskId, block.name, true, true)
+							} else {
+								showNotificationForApprovalIfAutoApprovalEnabled(
+									`Cline wants to create a child task: ${childTaskPrompt.substring(0, 50)}...`,
+								)
+								this.removeLastPartialMessageIfExistsWithType("say", "tool")
+								const didApprove = await askApproval("tool", completeMessage)
+								if (!didApprove) {
+									telemetryService.captureToolUsage(this.taskId, block.name, false, false)
+									await this.saveCheckpoint()
+									break
+								}
+								telemetryService.captureToolUsage(this.taskId, block.name, false, true)
+							}
+							// 执行工具
+							const toolResponse = await this.executeNewChildTaskTool(
+								childTaskPrompt,
+								childTaskFiles,
+								executeImmediately,
+							)
+							const isClaude4ModelFamily = await this.isClaude4ModelFamily()
+							pushToolResult(toolResponse, isClaude4ModelFamily)
+							await this.saveCheckpoint()
+							break
+						}
+					}
+
+					case "start_next_child_task": {
+						const sharedMessageProps: ClineSayTool = {
+							tool: "startNextChildTask",
+						}
+
+						if (block.partial) {
+							const partialMessage = JSON.stringify(sharedMessageProps)
+							if (this.shouldAutoApproveTool(block.name)) {
+								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+								await this.say("tool", partialMessage, undefined, undefined, block.partial)
+							} else {
+								this.removeLastPartialMessageIfExistsWithType("say", "tool")
+								await this.ask("tool", partialMessage, block.partial).catch(() => {})
+							}
+							break
+						} else {
+							this.consecutiveMistakeCount = 0
+
+							const completeMessage = JSON.stringify(sharedMessageProps)
+							if (this.shouldAutoApproveTool(block.name)) {
+								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+								await this.say("tool", completeMessage, undefined, undefined, false)
+								this.consecutiveAutoApprovedRequestsCount++
+								telemetryService.captureToolUsage(this.taskId, block.name, true, true)
+							} else {
+								showNotificationForApprovalIfAutoApprovalEnabled(
+									`Cline wants to start the next pending child task`,
+								)
+								this.removeLastPartialMessageIfExistsWithType("say", "tool")
+								const didApprove = await askApproval("tool", completeMessage)
+								if (!didApprove) {
+									telemetryService.captureToolUsage(this.taskId, block.name, false, false)
+									await this.saveCheckpoint()
+									break
+								}
+								telemetryService.captureToolUsage(this.taskId, block.name, false, true)
+							}
+
+							// 执行工具
+							const toolResponse = await this.executeStartNextChildTaskTool()
+							const isClaude4ModelFamily = await this.isClaude4ModelFamily()
+							pushToolResult(toolResponse, isClaude4ModelFamily)
+							await this.saveCheckpoint()
+							break
+						}
+					}
+
+					case "view_pending_tasks": {
+						const sharedMessageProps: ClineSayTool = {
+							tool: "viewPendingTasks",
+						}
+
+						if (block.partial) {
+							const partialMessage = JSON.stringify(sharedMessageProps)
+							if (this.shouldAutoApproveTool(block.name)) {
+								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+								await this.say("tool", partialMessage, undefined, undefined, block.partial)
+							} else {
+								this.removeLastPartialMessageIfExistsWithType("say", "tool")
+								await this.ask("tool", partialMessage, block.partial).catch(() => {})
+							}
+							break
+						} else {
+							this.consecutiveMistakeCount = 0
+
+							const completeMessage = JSON.stringify(sharedMessageProps)
+							if (this.shouldAutoApproveTool(block.name)) {
+								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+								await this.say("tool", completeMessage, undefined, undefined, false)
+								this.consecutiveAutoApprovedRequestsCount++
+								telemetryService.captureToolUsage(this.taskId, block.name, true, true)
+							} else {
+								showNotificationForApprovalIfAutoApprovalEnabled(`Cline wants to view pending child tasks`)
+								this.removeLastPartialMessageIfExistsWithType("say", "tool")
+								const didApprove = await askApproval("tool", completeMessage)
+								if (!didApprove) {
+									telemetryService.captureToolUsage(this.taskId, block.name, false, false)
+									await this.saveCheckpoint()
+									break
+								}
+								telemetryService.captureToolUsage(this.taskId, block.name, false, true)
+							}
+
+							// 执行工具
+							const toolResponse = await this.executeViewPendingTasksTool()
+							const isClaude4ModelFamily = await this.isClaude4ModelFamily()
+							pushToolResult(toolResponse, isClaude4ModelFamily)
+							await this.saveCheckpoint()
+							break
+						}
+					}
+
+					// 在 presentAssistantMessage 方法中，找到处理 attempt_completion 的 case 分支
 					case "attempt_completion": {
 						/*
 						this.consecutiveMistakeCount = 0
@@ -3901,6 +4171,37 @@ export class Task {
 									telemetryService.captureTaskCompleted(this.taskId)
 								}
 
+								this.status = "completed"
+								// 如果这是一个子任务，自动恢复父任务执行
+								if (this.parentId) {
+									// 获取父任务信息
+									const parentTask = await this.controller?.getTaskWithId(this.parentId)
+									if (!parentTask) {
+										console.error(`Parent task with ID ${this.parentId} not found.`)
+										return
+									}
+
+									await this.saveClineMessagesAndUpdateHistory() // 先保存子任务完成状态
+									const parentHistoryItem = parentTask.historyItem
+									// 更新父任务状态：清除当前活跃子任务
+									parentHistoryItem.activeChildTaskId = undefined
+									this.updateTaskHistory(parentTask.historyItem)
+									// 询问用户是否要切换到父任务
+									const { text } = await this.ask(
+										"followup",
+										JSON.stringify({
+											question: "当前子任务已完成，是否要返回父任务？",
+											options: ["是，立即回到父任务", "否，我还要继续处理"],
+										} satisfies ClineAskQuestion),
+									)
+
+									// 根据用户选择处理
+									if (text === "是，立即回到父任务") {
+										// 用户选择切换到父任务
+										await this.controller?.showTaskWithId(this.parentId)
+									}
+								}
+
 								// we already sent completion_result says, an empty string asks relinquishes control over button and field
 								const {
 									response,
@@ -3994,6 +4295,16 @@ export class Task {
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
+		// 在方法开始处添加暂停检查
+		if (this.isPaused()) {
+			// 如果任务被暂停，等待恢复
+			await pWaitFor(() => !this.isPaused() || this.abort, { interval: 100 })
+
+			// 如果是因为 abort 而退出等待，则返回
+			if (this.abort) {
+				return false
+			}
+		}
 		if (this.abort) {
 			throw new Error("Cline instance aborted")
 		}
@@ -4316,6 +4627,7 @@ export class Task {
 					}
 				}
 			} catch (error) {
+				console.error("Error while streaming API response:", error)
 				// abandoned happens when extension is no longer waiting for the cline instance to finish aborting (error is thrown here when any function in the for loop throws due to this.abort)
 				if (!this.abandoned) {
 					this.abortTask() // if the stream failed, there's various states the task could be in (i.e. could have streamed some tools the user may have executed), so we just resort to replicating a cancel task
@@ -4700,5 +5012,194 @@ export class Task {
 		}
 
 		return `<environment_details>\n${details.trim()}\n</environment_details>`
+	}
+	// 在 Task 类中添加这个新方法
+	async executeNewChildTaskTool(
+		childTaskPrompt: string,
+		childTaskFiles?: string[],
+		executeImmediately: boolean = true,
+	): Promise<ToolResponse> {
+		if (!this.context) {
+			return formatResponse.toolError("Task context is not available to create a child task.")
+		}
+		// Generate a unique ID for the child task
+		const childTaskId = Date.now().toString()
+
+		if (executeImmediately) {
+			// 立即执行模式：直接创建并启动子任务（保持原有行为）
+			await this.controller?.initTask(
+				childTaskPrompt,
+				undefined, // images
+				childTaskFiles, // files
+				undefined, // historyItem
+				this.taskId, // parentIdForNewTask
+				childTaskId, // childTaskId
+			)
+
+			// Add child task ID to our list
+			this.childTaskIds.push(childTaskId)
+			// Update our status to paused
+			this.status = "paused"
+			this.activeChildTaskId = childTaskId
+			// Save our current state
+			await this.saveClineMessagesAndUpdateHistory()
+
+			return `Child task created and started immediately (ID: ${childTaskId}). Parent task is now paused and will resume when the child task completes.`
+		} else {
+			// 延迟执行模式：只存储子任务信息，不立即执行
+			const childTaskInfo = {
+				id: childTaskId,
+				prompt: childTaskPrompt,
+				files: childTaskFiles,
+				createdAt: Date.now(),
+			}
+			this.pendingChildTasks.push(childTaskInfo)
+
+			// Add child task ID to our list for tracking
+			this.childTaskIds.push(childTaskId)
+			await this.saveClineMessagesAndUpdateHistory()
+
+			return `Child task created and queued for later execution (ID: ${childTaskId}). It will be executed when the parent task completes. Total pending child tasks: ${this.pendingChildTasks?.length || 0}`
+		}
+	}
+
+	/**
+	 * 检查并启动下一个待执行的子任务
+	 */
+	async startNextPendingChildTask(): Promise<boolean> {
+		try {
+			// 获取第一个待执行的子任务
+			const nextChildTask = this.pendingChildTasks.shift()
+			if (!nextChildTask) {
+				return false // 没有待执行的子任务
+			}
+			this.status = "paused"
+			this.saveClineMessagesAndUpdateHistory()
+			console.log(
+				"启动下一个待执行的子任务：",
+				nextChildTask.prompt,
+				undefined, // images
+				nextChildTask.files, // files
+				undefined, // historyItem
+				this.taskId, // parentIdForNewTask
+				nextChildTask.id, // childTaskId
+				true,
+			)
+			// 启动子任务
+			await this.controller?.initTask(
+				nextChildTask.prompt,
+				undefined, // images
+				nextChildTask.files, // files
+				undefined, // historyItem
+				this.taskId, // parentIdForNewTask
+				nextChildTask.id, // childTaskId
+			)
+
+			// 更新父任务状态
+			this.status = "paused"
+			this.activeChildTaskId = nextChildTask.id
+
+			await this.saveClineMessagesAndUpdateHistory()
+
+			return true // 成功启动了一个子任务
+		} catch (error) {
+			console.error("Failed to start next pending child task:", error)
+			return false
+		}
+	}
+
+	/**
+	 * 获取待执行子任务的数量
+	 */
+	async getPendingChildTasksCount(): Promise<number> {
+		try {
+			const currentHistoryItem = await this.controller?.getTaskWithId(this.taskId)
+			return currentHistoryItem?.historyItem.pendingChildTasks?.length || 0
+		} catch (error) {
+			console.error("Failed to get pending child tasks count:", error)
+			return 0
+		}
+	}
+
+	/**
+	 * 启动下一个待执行的子任务
+	 */
+	async executeStartNextChildTaskTool(): Promise<ToolResponse> {
+		if (!this.context) {
+			return formatResponse.toolError("Task context is not available to start child task.")
+		}
+
+		// 检查是否有待执行的子任务
+		if (!this.pendingChildTasks || this.pendingChildTasks.length === 0) {
+			return "No pending child tasks to execute."
+		}
+
+		// 检查是否已有活动的子任务
+		if (this.activeChildTaskId) {
+			return `Cannot start new child task. There is already an active child task (ID: ${this.activeChildTaskId}). Please wait for it to complete first.`
+		}
+
+		// 获取下一个待执行的子任务
+		const nextChildTask = this.pendingChildTasks.shift()
+		if (!nextChildTask) {
+			return "No pending child tasks available."
+		}
+
+		try {
+			// 启动子任务
+			await this.controller?.initTask(
+				nextChildTask.prompt,
+				undefined, // images
+				nextChildTask.files, // files
+				undefined, // historyItem
+				this.taskId, // parentIdForNewTask
+				nextChildTask.id, // childTaskId
+				true, // executeImmediately
+			)
+
+			// 更新父任务状态
+			this.status = "paused"
+			this.activeChildTaskId = nextChildTask.id
+
+			// 保存状态
+			await this.saveClineMessagesAndUpdateHistory()
+
+			return `Child task started successfully (ID: ${nextChildTask.id}). Parent task is now paused. Remaining pending tasks: ${this.pendingChildTasks.length}`
+		} catch (error) {
+			// 如果启动失败，将任务放回队列开头
+			this.pendingChildTasks.unshift(nextChildTask)
+			const errorMessage = error instanceof Error ? error.message : "Unknown error"
+			return formatResponse.toolError(`Failed to start child task: ${errorMessage}`)
+		}
+	}
+
+	/**
+	 * 查看待执行的子任务列表
+	 */
+	async executeViewPendingTasksTool(): Promise<ToolResponse> {
+		if (!this.pendingChildTasks || this.pendingChildTasks.length === 0) {
+			return "No pending child tasks."
+		}
+
+		let result = `Pending Child Tasks (${this.pendingChildTasks.length} total):\n\n`
+
+		this.pendingChildTasks.forEach((task, index) => {
+			const createdDate = new Date(task.createdAt).toLocaleString()
+			result += `${index + 1}. Task ID: ${task.id}\n`
+			result += `   Prompt: ${task.prompt.substring(0, 100)}${task.prompt.length > 100 ? "..." : ""}\n`
+			result += `   Created: ${createdDate}\n`
+			if (task.files && task.files.length > 0) {
+				result += `   Files: ${task.files.join(", ")}\n`
+			}
+			result += "\n"
+		})
+
+		// 添加当前活动子任务信息（如果有）
+		if (this.activeChildTaskId) {
+			result += `\nCurrently Active Child Task: ${this.activeChildTaskId}\n`
+			result += `Parent Task Status: ${this.status}\n`
+		}
+
+		return result
 	}
 }

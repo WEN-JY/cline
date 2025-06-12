@@ -13,6 +13,13 @@ import { ClineRulesToggles } from "./cline-rules"
 
 // webview will hold state
 export interface ExtensionMessage {
+	// 在 ExtensionMessage 接口中添加以下属性
+	childTaskId?: string
+	childTaskPrompt?: string
+	executeImmediately?: boolean
+	parentId?: string
+	resultSummary?: string
+	failureReason?: string
 	type:
 		| "action"
 		| "state"
@@ -172,6 +179,7 @@ export type ClineAsk =
 	| "new_task"
 	| "condense"
 	| "report_bug"
+	| "child_task_completed"
 
 export type ClineSay =
 	| "task"
@@ -210,17 +218,31 @@ export interface ClineSayTool {
 		| "listFilesRecursive"
 		| "listCodeDefinitionNames"
 		| "searchFiles"
+		| "newChildTask"
+		| "startNextChildTask"
+		| "viewPendingTasks"
+
 	path?: string
 	diff?: string
 	content?: string
 	regex?: string
 	filePattern?: string
 	operationIsLocatedInWorkspace?: boolean
+	// 添加新的属性来支持 newChildTask
+	prompt?: string
+	files?: string[]
+	executeImmediately?: boolean
 }
 
 // must keep in sync with system prompt
 export const browserActions = ["launch", "click", "type", "scroll_down", "scroll_up", "close"] as const
 export type BrowserAction = (typeof browserActions)[number]
+export interface ClineAskChildTaskCompleted {
+	childTaskId: string
+	parentTaskId: string
+	childTaskResult: string
+	parentTaskTitle: string
+}
 
 export interface ClineSayBrowserAction {
 	action: BrowserAction

@@ -1,3 +1,12 @@
+/*
+ * @Description:
+ * @version: 0.0.1
+ * @Company: alibaba.com
+ * @Author: 执无
+ * @Date: 2025-05-26 13:48:46
+ * @LastEditors: 执无
+ * @LastEditTime: 2025-06-10 17:03:22
+ */
 import { Controller } from ".."
 import { Empty, EmptyRequest } from "../../../shared/proto/common"
 import { resetExtensionState } from "../../../core/storage/state"
@@ -15,6 +24,7 @@ export async function resetState(controller: Controller, request: EmptyRequest):
 		await resetExtensionState(controller.context)
 
 		if (controller.task) {
+			console.log("resetState Aborting current task")
 			controller.task.abortTask()
 			controller.task = undefined
 		}

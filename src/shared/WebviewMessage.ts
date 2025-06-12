@@ -27,6 +27,7 @@ export interface WebviewMessage {
 		| "grpc_request_cancel"
 		| "toggleWorkflow"
 		| "executeQuickWin"
+		| "showTaskWithId"
 
 	text?: string
 	disabled?: boolean
@@ -80,6 +81,14 @@ export interface WebviewMessage {
 
 	offset?: number
 	shellIntegrationTimeout?: number
+	// Fields for parent-child task management
+	parentId?: string
+	childTaskId?: string
+	childTaskPrompt?: string
+	executeImmediately?: boolean
+	childId?: string // Used by childTaskCompleted and childTaskFailed
+	resultSummary?: string
+	failureReason?: string
 }
 
 export type ClineAskResponse = "yesButtonClicked" | "noButtonClicked" | "messageResponse"
