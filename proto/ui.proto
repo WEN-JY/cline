@@ -73,6 +73,9 @@ enum ClineSay {
   CHECKPOINT_CREATED = 24;
   LOAD_MCP_DOCUMENTATION = 25;
   INFO = 26;
+  NEW_CHILD_TASK = 27;
+  START_NEXT_CHILD_TASK = 28;
+  CHILD_TASK_COMPLETED = 29;
 }
 
 // Enum for ClineSayTool tool types
