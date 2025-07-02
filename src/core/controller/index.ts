@@ -86,6 +86,11 @@ export class Controller {
 			},
 		)
 
+		// Update MCP servers cwd to current workspace path
+		this.mcpHub.updateMcpServersCwd().catch((error) => {
+			console.error("Failed to update MCP servers cwd:", error)
+		})
+
 		// Clean up legacy checkpoints
 		cleanupLegacyCheckpoints(this.context.globalStorageUri.fsPath, this.outputChannel).catch((error) => {
 			console.error("Failed to cleanup legacy checkpoints:", error)
