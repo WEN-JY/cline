@@ -63,6 +63,10 @@ export interface ExtensionMessage {
 		is_streaming?: boolean // Whether this is part of a streaming response
 		sequence_number?: number // For ordering chunks in streaming responses
 	}
+	childTaskId?: string
+	childTaskPrompt?: string
+	executeImmediately?: boolean
+	parentId?: string
 }
 
 export type Platform = "aix" | "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32" | "unknown"
@@ -167,6 +171,9 @@ export type ClineSay =
 	| "checkpoint_created"
 	| "load_mcp_documentation"
 	| "info" // Added for general informational messages like retry status
+	| "new_child_task"
+	| "start_next_child_task"
+	| "child_task_completed"
 
 export interface ClineSayTool {
 	tool:
@@ -178,18 +185,24 @@ export interface ClineSayTool {
 		| "listCodeDefinitionNames"
 		| "searchFiles"
 		| "webFetch"
+		| "newChildTask"
+		| "startNextChildTask"
+		| "viewPendingChildTasks"
 	path?: string
 	diff?: string
 	content?: string
 	regex?: string
 	filePattern?: string
 	operationIsLocatedInWorkspace?: boolean
+	// 添加新的属性来支持 newChildTask
+	prompt?: string
+	files?: string[]
+	executeImmediately?: boolean
 }
 
 // must keep in sync with system prompt
 export const browserActions = ["launch", "click", "type", "scroll_down", "scroll_up", "close"] as const
 export type BrowserAction = (typeof browserActions)[number]
-
 export interface ClineSayBrowserAction {
 	action: BrowserAction
 	coordinate?: string

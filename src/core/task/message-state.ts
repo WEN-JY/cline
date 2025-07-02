@@ -13,12 +13,19 @@ import { HistoryItem } from "@/shared/HistoryItem"
 import Anthropic from "@anthropic-ai/sdk"
 import { TaskState } from "./TaskState"
 
+interface TaskInfo {
+	parentId?: string
+	activeChildTaskId?: string
+	status: HistoryItem["status"]
+	pendingChildTasks: { id: string; prompt: string; createdAt: number }[]
+}
 interface MessageStateHandlerParams {
 	context: vscode.ExtensionContext
 	taskId: string
 	taskIsFavorited?: boolean
 	updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
 	taskState: TaskState
+	getTaskInfo: () => TaskInfo
 }
 
 const cwd = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0) ?? path.join(os.homedir(), "Desktop") // may or may not exist but fs checking existence would immediately ask for permission which would be bad UX, need to come up with a better solution
@@ -28,17 +35,19 @@ export class MessageStateHandler {
 	private clineMessages: ClineMessage[] = []
 	private taskIsFavorited: boolean
 	private checkpointTracker: CheckpointTracker | undefined
-	private updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
-	private context: vscode.ExtensionContext
 	private taskId: string
 	private taskState: TaskState
 
+	private context: vscode.ExtensionContext
+	private updateTaskHistory: (historyItem: HistoryItem) => Promise<HistoryItem[]>
+	private getTaskInfo: () => TaskInfo
 	constructor(params: MessageStateHandlerParams) {
 		this.context = params.context
 		this.taskId = params.taskId
 		this.taskState = params.taskState
 		this.taskIsFavorited = params.taskIsFavorited ?? false
 		this.updateTaskHistory = params.updateTaskHistory
+		this.getTaskInfo = params.getTaskInfo
 	}
 
 	setCheckpointTracker(tracker: CheckpointTracker | undefined) {
@@ -62,6 +71,7 @@ export class MessageStateHandler {
 	}
 
 	async saveClineMessagesAndUpdateHistory(): Promise<void> {
+		const { parentId, status, pendingChildTasks, activeChildTaskId } = this.getTaskInfo()
 		try {
 			await saveClineMessages(this.context, this.taskId, this.clineMessages)
 
@@ -98,7 +108,11 @@ export class MessageStateHandler {
 				cwdOnTaskInitialization: cwd,
 				conversationHistoryDeletedRange: this.taskState.conversationHistoryDeletedRange,
 				isFavorited: this.taskIsFavorited,
-			})
+				status,
+				parentId,
+				pendingChildTasks,
+				activeChildTaskId,
+			} satisfies HistoryItem)
 		} catch (error) {
 			console.error("Failed to save cline messages:", error)
 		}

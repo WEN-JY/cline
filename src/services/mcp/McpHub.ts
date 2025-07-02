@@ -1073,6 +1073,54 @@ export class McpHub {
 		console.log("[MCP Debug] Notification callback cleared")
 	}
 
+	/**
+	 * Update the cwd environment variable for all stdio MCP servers to the current workspace path
+	 */
+	async updateMcpServersCwd(): Promise<void> {
+		try {
+			const currentWorkspacePath = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath).at(0)
+			if (!currentWorkspacePath) {
+				console.log("No workspace folder found, skipping MCP servers cwd update")
+				return
+			}
+
+			const settings = await this.readAndValidateMcpSettingsFile()
+			if (!settings) {
+				console.log("No MCP settings found, skipping cwd update")
+				return
+			}
+
+			let hasChanges = false
+			const updatedServers = { ...settings.mcpServers }
+
+			// Update cwd for all stdio servers
+			for (const [serverName, serverConfig] of Object.entries(updatedServers)) {
+				if (serverConfig.type === "stdio" || (!serverConfig.type && "command" in serverConfig)) {
+					// Initialize env if it doesn't exist
+					if (!serverConfig.env) {
+						serverConfig.env = {}
+					}
+
+					// Update cwd if it's different from current workspace path
+					if (serverConfig.env.cwd !== currentWorkspacePath) {
+						serverConfig.env.cwd = currentWorkspacePath
+						hasChanges = true
+						console.log(`Updated cwd for MCP server "${serverName}" to: ${currentWorkspacePath}`)
+					}
+				}
+			}
+
+			// Save changes if any were made
+			if (hasChanges) {
+				const settingsPath = await this.getMcpSettingsFilePath()
+				await fs.writeFile(settingsPath, JSON.stringify({ mcpServers: updatedServers }, null, 2))
+				console.log("MCP settings updated with current workspace cwd")
+			}
+		} catch (error) {
+			console.error("Failed to update MCP servers cwd:", error)
+		}
+	}
+
 	async dispose(): Promise<void> {
 		this.removeAllFileWatchers()
 		for (const connection of this.connections) {

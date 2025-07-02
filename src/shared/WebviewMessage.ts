@@ -16,6 +16,7 @@ export interface WebviewMessage {
 		| "fetchUserCreditsData"
 		| "grpc_request"
 		| "grpc_request_cancel"
+		| "showTaskWithId"
 
 	text?: string
 	disabled?: boolean
@@ -70,6 +71,11 @@ export interface WebviewMessage {
 	shellIntegrationTimeout?: number
 	terminalReuseEnabled?: boolean
 	defaultTerminalProfile?: string
+
+	parentId?: string
+	childTaskId?: string
+	childTaskPrompt?: string
+	executeImmediately?: boolean
 }
 
 export type ClineAskResponse = "yesButtonClicked" | "noButtonClicked" | "messageResponse"

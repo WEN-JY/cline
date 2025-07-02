@@ -39,6 +39,7 @@ import NewTaskPreview from "./NewTaskPreview"
 import ReportBugPreview from "./ReportBugPreview"
 import UserMessage from "./UserMessage"
 import QuoteButton from "./QuoteButton"
+import BackToParent from "./BackToParent"
 
 const normalColor = "var(--vscode-foreground)"
 const errorColor = "var(--vscode-errorForeground)"
@@ -650,6 +651,104 @@ export const ChatRowContent = ({
 						/>
 					</>
 				)
+			case "newChildTask":
+				return (
+					<>
+						<div style={headerStyle}>
+							{toolIcon("split-horizontal")}
+							<span style={{ fontWeight: "bold" }}>
+								{message.type === "ask" ? "Cline wants to create a child task:" : "Cline created a child task:"}
+							</span>
+						</div>
+						<div
+							style={{
+								borderRadius: 3,
+								backgroundColor: CODE_BLOCK_BG_COLOR,
+								padding: "12px",
+								border: "1px solid var(--vscode-editorGroup-border)",
+							}}>
+							<div style={{ marginBottom: "8px" }}>
+								<strong>Task:</strong> {tool.prompt}
+							</div>
+							{tool.files && tool.files.length > 0 && (
+								<div style={{ marginBottom: "8px" }}>
+									<strong>Files:</strong>
+									<ul style={{ margin: "4px 0 0 20px", padding: 0 }}>
+										{tool.files.map((file, index) => (
+											<li key={index} style={{ listStyle: "disc" }}>
+												<code>{file}</code>
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
+							<div>
+								<strong>Execute immediately:</strong> {tool.executeImmediately ? "Yes" : "No"}
+							</div>
+						</div>
+					</>
+				)
+			case "startNextChildTask":
+				return (
+					<>
+						<div style={headerStyle}>
+							{toolIcon("split-horizontal")}
+							<span style={{ fontWeight: "bold" }}>
+								{message.type === "ask"
+									? "Cline wants to start next child task:"
+									: "Cline completed next child task:"}
+							</span>
+						</div>
+						<div
+							style={{
+								borderRadius: 3,
+								backgroundColor: CODE_BLOCK_BG_COLOR,
+								padding: "12px",
+								border: "1px solid var(--vscode-editorGroup-border)",
+							}}>
+							<div style={{ marginBottom: "8px" }}>
+								<strong>Task:</strong> {tool.prompt}
+							</div>
+							{tool.files && tool.files.length > 0 && (
+								<div style={{ marginBottom: "8px" }}>
+									<strong>Files:</strong>
+									<ul style={{ margin: "4px 0 0 20px", padding: 0 }}>
+										{tool.files.map((file, index) => (
+											<li key={index} style={{ listStyle: "disc" }}>
+												<code>{file}</code>
+											</li>
+										))}
+									</ul>
+								</div>
+							)}
+							<div>
+								<strong>Execute immediately:</strong> {tool.executeImmediately ? "Yes" : "No"}
+							</div>
+						</div>
+					</>
+				)
+			case "viewPendingChildTasks":
+				return (
+					<>
+						<div style={headerStyle}>
+							{toolIcon("search")}
+							<span style={{ fontWeight: "bold" }}>
+								{message.type === "ask"
+									? "Cline wants to view pending child tasks."
+									: "Cline viewed pending child tasks:"}
+							</span>
+						</div>
+						{tool.content && (
+							<CodeAccordian
+								code={tool.content!}
+								path={tool.path!}
+								language="plaintext"
+								isExpanded={isExpanded}
+								onToggleExpand={onToggleExpand}
+							/>
+						)}
+					</>
+				)
 			case "searchFiles":
 				return (
 					<>
@@ -997,6 +1096,32 @@ export const ChatRowContent = ({
 							)}
 						</>
 					)
+
+				case "child_task_completed":
+					return (
+						message.text && (
+							<>
+								<div style={headerStyle}>
+									{icon}
+									{title}
+								</div>
+								<p
+									style={{
+										...pStyle,
+										color: "var(--vscode-descriptionForeground)",
+									}}>
+									{message.text}
+								</p>
+							</>
+						)
+					)
+				case "start_next_child_task":
+				case "new_child_task":
+					return (
+						<div style={{ marginTop: "10px" }}>
+							<p>{message.text || ""}</p>
+						</div>
+					)
 				case "api_req_finished":
 					return null // we should never see this message type
 				case "mcp_server_response":
@@ -1309,6 +1434,7 @@ export const ChatRowContent = ({
 									</SuccessButton>
 								</div>
 							)}
+							<BackToParent />
 						</>
 					)
 				case "shell_integration_warning":
@@ -1479,6 +1605,7 @@ export const ChatRowContent = ({
 										</SuccessButton>
 									</div>
 								)}
+								{/* <BackToParent /> */}
 							</div>
 						)
 					} else {

@@ -15,6 +15,8 @@ import TaskTimeline from "./TaskTimeline"
 import DeleteTaskButton from "./buttons/DeleteTaskButton"
 import CopyTaskButton from "./buttons/CopyTaskButton"
 import OpenDiskTaskHistoryButton from "./buttons/OpenDiskTaskHistoryButton"
+import { HistoryItem } from "@shared/HistoryItem"
+import { TaskHierarchy } from "./TaskHierarchy"
 
 const IS_DEV = process.env.IS_DEV
 
@@ -29,6 +31,8 @@ interface TaskHeaderProps {
 	lastApiReqTotalTokens?: number
 	onClose: () => void
 	onScrollToMessage?: (messageIndex: number) => void
+	currentTaskItem?: HistoryItem
+	allTasks?: HistoryItem[]
 }
 
 const TaskHeader: React.FC<TaskHeaderProps> = ({
@@ -42,6 +46,7 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 	lastApiReqTotalTokens,
 	onClose,
 	onScrollToMessage,
+	allTasks,
 }) => {
 	const { apiConfiguration, currentTaskItem, checkpointTrackerErrorMessage, clineMessages, navigateToSettings } =
 		useExtensionState()
@@ -208,6 +213,13 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 		</>
 	)
 
+	const isChildTask = useMemo(() => {
+		return currentTaskItem?.parentId !== undefined && currentTaskItem?.parentId !== ""
+	}, [currentTaskItem?.parentId])
+	const navigateToTask = (taskId: string) => {
+		TaskServiceClient.showTaskWithId(StringRequest.create({ value: taskId }))
+	}
+
 	return (
 		<div style={{ padding: "10px 13px 10px 13px" }}>
 			<div
@@ -286,6 +298,28 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 							${totalCost?.toFixed(4)}
 						</div>
 					)}
+					{isChildTask && (
+						<div
+							onClick={() => {
+								if (currentTaskItem?.parentId) {
+									navigateToTask(currentTaskItem.parentId)
+								}
+							}}
+							style={{
+								marginLeft: 10,
+								backgroundColor: "color-mix(in srgb, var(--vscode-badge-foreground) 70%, transparent)",
+								color: "var(--vscode-badge-background)",
+								padding: "2px 4px",
+								borderRadius: "500px",
+								fontSize: "11px",
+								fontWeight: 500,
+								display: "inline-block",
+								flexShrink: 0,
+								cursor: "pointer",
+							}}>
+							←
+						</div>
+					)}
 					<VSCodeButton
 						appearance="icon"
 						onClick={onClose}
@@ -307,61 +341,78 @@ const TaskHeader: React.FC<TaskHeaderProps> = ({
 								position: "relative",
 							}}>
 							<div
-								ref={textRef}
 								style={{
-									display: "-webkit-box",
-									WebkitLineClamp: isTextExpanded ? "unset" : 2,
-									WebkitBoxOrient: "vertical",
-									overflow: "hidden",
-									whiteSpace: "pre-wrap",
-									wordBreak: "break-word",
-									overflowWrap: "anywhere",
+									position: "relative",
 								}}>
-								<span className="ph-no-capture">{highlightText(task.text, false)}</span>
-							</div>
-							{!isTextExpanded && showSeeMore && (
 								<div
+									ref={textRef}
 									style={{
-										position: "absolute",
-										right: 0,
-										bottom: 0,
-										display: "flex",
-										alignItems: "center",
+										display: "-webkit-box",
+										WebkitLineClamp: isTextExpanded ? "unset" : 2,
+										WebkitBoxOrient: "vertical",
+										overflow: "hidden",
+										whiteSpace: "pre-wrap",
+										wordBreak: "break-word",
+										overflowWrap: "anywhere",
 									}}>
+									<span className="ph-no-capture">{highlightText(task.text, false)}</span>
+								</div>
+
+								{!isTextExpanded && showSeeMore && (
 									<div
 										style={{
-											width: 30,
-											height: "1.2em",
-											background: "linear-gradient(to right, transparent, var(--vscode-badge-background))",
-										}}
-									/>
+											position: "absolute",
+											right: 0,
+											bottom: 0,
+											display: "flex",
+											alignItems: "center",
+										}}>
+										<div
+											style={{
+												width: 30,
+												height: "1.2em",
+												background:
+													"linear-gradient(to right, transparent, var(--vscode-badge-background))",
+											}}
+										/>
+										<div
+											style={{
+												cursor: "pointer",
+												color: "var(--vscode-textLink-foreground)",
+												paddingRight: 0,
+												paddingLeft: 3,
+												backgroundColor: "var(--vscode-badge-background)",
+											}}
+											onClick={() => setIsTextExpanded(!isTextExpanded)}>
+											See more
+										</div>
+									</div>
+								)}
+
+								{isTextExpanded && showSeeMore && (
 									<div
 										style={{
 											cursor: "pointer",
 											color: "var(--vscode-textLink-foreground)",
-											paddingRight: 0,
-											paddingLeft: 3,
-											backgroundColor: "var(--vscode-badge-background)",
+											marginLeft: "auto",
+											textAlign: "right",
+											paddingRight: 2,
 										}}
 										onClick={() => setIsTextExpanded(!isTextExpanded)}>
-										See more
+										See less
 									</div>
-								</div>
+								)}
+							</div>
+							{currentTaskItem && (
+								<TaskHierarchy
+									currentTask={currentTaskItem}
+									allTasks={allTasks || []}
+									onTaskClick={navigateToTask}
+									isTaskExpanded={isTaskExpanded}
+								/>
 							)}
 						</div>
-						{isTextExpanded && showSeeMore && (
-							<div
-								style={{
-									cursor: "pointer",
-									color: "var(--vscode-textLink-foreground)",
-									marginLeft: "auto",
-									textAlign: "right",
-									paddingRight: 2,
-								}}
-								onClick={() => setIsTextExpanded(!isTextExpanded)}>
-								See less
-							</div>
-						)}
+
 						{((task.images && task.images.length > 0) || (task.files && task.files.length > 0)) && (
 							<Thumbnails images={task.images ?? []} files={task.files ?? []} />
 						)}

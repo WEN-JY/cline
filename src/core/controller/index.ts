@@ -44,6 +44,8 @@ import { sendAddToInputEvent } from "./ui/subscribeToAddToInput"
 import { sendAuthCallbackEvent } from "./account/subscribeToAuthCallback"
 import { sendMcpMarketplaceCatalogEvent } from "./mcp/subscribeToMcpMarketplaceCatalog"
 import { sendRelinquishControlEvent } from "./ui/subscribeToRelinquishControl"
+import { showTaskWithId } from "./task/showTaskWithId"
+import { StringRequest } from "@/generated/grpc-js/common"
 
 /*
 https://github.com/microsoft/vscode-webview-ui-toolkit-samples/blob/main/default/weather-webview/src/providers/WeatherViewProvider.ts
@@ -87,6 +89,11 @@ export class Controller {
 			},
 		)
 
+		// Update MCP servers cwd to current workspace path
+		this.mcpHub.updateMcpServersCwd().catch((error) => {
+			console.error("Failed to update MCP servers cwd:", error)
+		})
+
 		// Clean up legacy checkpoints
 		cleanupLegacyCheckpoints(this.context.globalStorageUri.fsPath, this.outputChannel).catch((error) => {
 			console.error("Failed to cleanup legacy checkpoints:", error)
@@ -129,7 +136,14 @@ export class Controller {
 		await updateGlobalState(this.context, "userInfo", info)
 	}
 
-	async initTask(task?: string, images?: string[], files?: string[], historyItem?: HistoryItem) {
+	async initTask(
+		task?: string,
+		images?: string[],
+		files?: string[],
+		historyItem?: HistoryItem,
+		parentTaskId?: string,
+		childTaskId?: string,
+	) {
 		await this.clearTask() // ensures that an existing task doesn't exist before starting a new one, although this shouldn't be possible since user must clear task before starting a new one
 		const {
 			apiConfiguration,
@@ -169,6 +183,16 @@ export class Controller {
 			(message) => this.postMessageToWebview(message),
 			(taskId) => this.reinitExistingTaskFromId(taskId),
 			() => this.cancelTask(),
+			(
+				task?: string,
+				images?: string[],
+				files?: string[],
+				historyItem?: HistoryItem,
+				parentTaskId?: string,
+				childTaskId?: string,
+			) => this.initTask(task, images, files, historyItem, parentTaskId, childTaskId),
+			(taskId: string) => showTaskWithId(this, StringRequest.create({ value: taskId })),
+			(taskId: string) => this.getTaskWithId(taskId),
 			apiConfiguration,
 			autoApprovalSettings,
 			browserSettings,
@@ -182,6 +206,8 @@ export class Controller {
 			images,
 			files,
 			historyItem,
+			parentTaskId,
+			childTaskId,
 		)
 	}
 
@@ -906,7 +932,6 @@ export class Controller {
 
 		await this.postStateToWebview()
 	}
-
 	async deleteTaskWithId(id: string) {
 		console.info("deleteTaskWithId: ", id)
 

@@ -38,23 +38,24 @@ import { extractTextFromFile, processFilesIntoText } from "@integrations/misc/ex
 import { COMMAND_REQ_APP_STRING } from "@shared/combineCommandSequences"
 import { UrlContentFetcher } from "@services/browser/UrlContentFetcher"
 import { constructNewFileContent } from "../assistant-message/diff"
-import { getReadablePath, isLocatedInWorkspace } from "@/utils/path"
-import { listFiles } from "@/services/glob/list-files"
+import { getReadablePath, isLocatedInWorkspace } from "@utils/path"
+import { listFiles } from "@services/glob/list-files"
 import { showNotificationForApprovalIfAutoApprovalEnabled } from "./utils"
-import { parseSourceCodeForDefinitionsTopLevel } from "@/services/tree-sitter"
-import { regexSearchFiles } from "@/services/ripgrep"
-import { showSystemNotification } from "@/integrations/notifications"
-import { findLast, findLastIndex, parsePartialArrayString } from "@/shared/array"
+import { parseSourceCodeForDefinitionsTopLevel } from "@services/tree-sitter"
+import { regexSearchFiles } from "@services/ripgrep"
+import { showSystemNotification } from "@integrations/notifications"
+import { findLast, findLastIndex, parsePartialArrayString } from "@shared/array"
 import { ensureTaskDirectoryExists } from "../storage/disk"
-import { telemetryService } from "@/services/posthog/telemetry/TelemetryService"
+import { telemetryService } from "@services/posthog/telemetry/TelemetryService"
 import { loadMcpDocumentation } from "../prompts/loadMcpDocumentation"
 import Anthropic from "@anthropic-ai/sdk"
-import { createAndOpenGitHubIssue } from "@/utils/github-url-utils"
+import { createAndOpenGitHubIssue } from "@utils/github-url-utils"
 import { getWorkspaceState } from "../storage/state"
 import os from "os"
 import { ContextManager } from "../context/context-management/ContextManager"
 import { setTimeout as setTimeoutPromise } from "node:timers/promises"
 import { ChangeLocation, StreamingJsonReplacer } from "../assistant-message/diff-json"
+import { HistoryItem } from "@shared/HistoryItem"
 
 export class ToolExecutor {
 	constructor(
@@ -77,6 +78,23 @@ export class ToolExecutor {
 		private autoApprovalSettings: AutoApprovalSettings,
 		private browserSettings: BrowserSettings,
 		private chatSettings: ChatSettings,
+		private status: HistoryItem["status"] = "running",
+		private pendingChildTasks: Array<{
+			id: string
+			prompt: string
+			files?: string[]
+			createdAt: number
+		}> = [],
+		private childTaskIds: string[] = [],
+		private activeChildTaskId: string | undefined = undefined,
+		private initTask: (
+			task?: string,
+			images?: string[],
+			files?: string[],
+			historyItem?: HistoryItem,
+			parentTaskId?: string,
+			childTaskId?: string,
+		) => void,
 		private cwd: string,
 		private taskId: string,
 
@@ -176,6 +194,12 @@ export class ToolExecutor {
 				return `[${block.name} for '${block.params.path}']`
 			case "web_fetch":
 				return `[${block.name} for '${block.params.url}']`
+			case "new_child_task":
+				return `[${block.name} for creating a sub-task with prompt: '${block.params.child_task_prompt}']`
+			case "start_next_child_task":
+				return `[${block.name}]`
+			case "view_pending_tasks":
+				return `[${block.name}]`
 		}
 	}
 
@@ -2267,7 +2291,7 @@ export class ToolExecutor {
 							break
 						}
 						this.taskState.consecutiveMistakeCount = 0
-
+						this.status = "completed"
 						if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
 							showSystemNotification({
 								subtitle: "Task Completed",
@@ -2360,6 +2384,305 @@ export class ToolExecutor {
 					break
 				}
 			}
+			case "new_child_task": {
+				const childTaskPrompt: string | undefined = block.params.child_task_prompt
+				const childTaskFilesRaw: string | undefined = block.params.child_task_files
+				const executeImmediatelyRaw: string | undefined = block.params.execute_immediately
+				const executeImmediately = executeImmediatelyRaw?.toLowerCase() !== "false"
+
+				let childTaskFiles: string[] | undefined
+				if (childTaskFilesRaw) {
+					try {
+						const parsedFiles = JSON.parse(childTaskFilesRaw)
+						if (Array.isArray(parsedFiles) && parsedFiles.every((item) => typeof item === "string")) {
+							childTaskFiles = parsedFiles
+						}
+					} catch (e) {
+						// Handle parsing error
+					}
+				}
+
+				const sharedMessageProps: ClineSayTool = {
+					tool: "newChildTask",
+					prompt: this.removeClosingTag(block, "child_task_prompt", childTaskPrompt),
+					files: childTaskFiles,
+					executeImmediately: executeImmediately,
+				}
+
+				if (block.partial) {
+					const partialMessage = JSON.stringify(sharedMessageProps)
+					if (this.shouldAutoApproveTool(block.name)) {
+						this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+						await this.say("tool", partialMessage, undefined, undefined, block.partial)
+					} else {
+						this.removeLastPartialMessageIfExistsWithType("say", "tool")
+						await this.ask("tool", partialMessage, block.partial).catch(() => {})
+					}
+					break
+				} else {
+					if (!childTaskPrompt) {
+						this.taskState.consecutiveMistakeCount++
+						this.pushToolResult(
+							await this.sayAndCreateMissingParamError("new_child_task", "child_task_prompt"),
+							block,
+						)
+						await this.saveCheckpoint()
+						break
+					}
+					this.taskState.consecutiveMistakeCount = 0
+
+					const completeMessage = JSON.stringify(sharedMessageProps)
+
+					if (this.shouldAutoApproveTool(block.name)) {
+						this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+						await this.say("tool", completeMessage, undefined, undefined, false)
+						this.taskState.consecutiveAutoApprovedRequestsCount++
+						telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, true, true)
+					} else {
+						if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
+							showSystemNotification({
+								subtitle: "Cline wants to create a new child task...",
+								message: `Cline wants to create a child task: ${childTaskPrompt.substring(0, 50)}...`,
+							})
+						}
+						this.removeLastPartialMessageIfExistsWithType("say", "tool")
+						const didApprove = await this.askApproval("tool", block, completeMessage)
+						if (!didApprove) {
+							telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, false)
+							await this.saveCheckpoint()
+							break
+						}
+						telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, true)
+					}
+					const toolResponse = await this.executeNewChildTaskTool(childTaskPrompt, childTaskFiles, executeImmediately)
+					await this.messageStateHandler.saveClineMessagesAndUpdateHistory()
+					this.say("new_child_task", `Child Task: "${sharedMessageProps.prompt}" created.`, undefined, undefined, false)
+					const isClaude4Model = await isClaude4ModelFamily(this.api)
+					this.pushToolResult(toolResponse, block)
+					await this.saveCheckpoint()
+					break
+				}
+			}
+
+			case "start_next_child_task": {
+				const nextChildTask = this.pendingChildTasks[0]
+
+				const sharedMessageProps: ClineSayTool = {
+					prompt: this.removeClosingTag(block, "child_task_prompt", nextChildTask.prompt),
+					files: nextChildTask.files,
+					executeImmediately: false,
+					tool: "startNextChildTask",
+				}
+
+				if (block.partial) {
+					const partialMessage = JSON.stringify(sharedMessageProps)
+					if (this.shouldAutoApproveTool(block.name)) {
+						this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+						await this.say("tool", partialMessage, undefined, undefined, block.partial)
+					} else {
+						this.removeLastPartialMessageIfExistsWithType("say", "tool")
+						await this.ask("tool", partialMessage, block.partial).catch(() => {})
+					}
+					break
+				} else {
+					this.taskState.consecutiveMistakeCount = 0
+
+					const completeMessage = JSON.stringify(sharedMessageProps)
+					if (this.shouldAutoApproveTool(block.name)) {
+						this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+						await this.say("tool", completeMessage, undefined, undefined, false)
+						this.taskState.consecutiveAutoApprovedRequestsCount++
+						telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, true, true)
+					} else {
+						if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
+							showSystemNotification({
+								subtitle: "Approval Required",
+								message: `Cline wants to start the next pending child task`,
+							})
+						}
+						this.removeLastPartialMessageIfExistsWithType("say", "tool")
+						const didApprove = await this.askApproval("tool", block, completeMessage)
+						if (!didApprove) {
+							telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, false)
+							await this.saveCheckpoint()
+							break
+						}
+						telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, true)
+					}
+
+					const toolResponse = await this.startNextChildTask()
+					const isClaude4Model = await isClaude4ModelFamily(this.api)
+					this.pushToolResult(toolResponse, block)
+					await this.saveCheckpoint()
+					break
+				}
+			}
+
+			case "view_pending_tasks": {
+				const sharedMessageProps: ClineSayTool = {
+					tool: "viewPendingChildTasks",
+				}
+
+				if (block.partial) {
+					const partialMessage = JSON.stringify(sharedMessageProps)
+					if (this.shouldAutoApproveTool(block.name)) {
+						this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+						await this.say("tool", partialMessage, undefined, undefined, block.partial)
+					} else {
+						this.removeLastPartialMessageIfExistsWithType("say", "tool")
+						await this.ask("tool", partialMessage, block.partial).catch(() => {})
+					}
+					break
+				} else {
+					this.taskState.consecutiveMistakeCount = 0
+
+					const completeMessage = JSON.stringify(sharedMessageProps)
+					if (this.shouldAutoApproveTool(block.name)) {
+						this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+						await this.say("tool", completeMessage, undefined, undefined, false)
+						this.taskState.consecutiveAutoApprovedRequestsCount++
+						telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, true, true)
+					} else {
+						if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
+							showSystemNotification({
+								subtitle: "Approval Required",
+								message: `Cline wants to view pending child tasks`,
+							})
+						}
+						this.removeLastPartialMessageIfExistsWithType("say", "tool")
+						const didApprove = await this.askApproval("tool", block, completeMessage)
+						if (!didApprove) {
+							telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, false)
+							await this.saveCheckpoint()
+							break
+						}
+						telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, true)
+					}
+
+					const toolResponse = await this.executeViewPendingTasksTool()
+					const isClaude4Model = await isClaude4ModelFamily(this.api)
+					this.pushToolResult(toolResponse, block)
+					if (this.pendingChildTasks && this.pendingChildTasks.length > 0) {
+						const { response: continueResponse, text } = await this.ask(
+							"followup",
+							JSON.stringify({
+								question: `Found ${this.pendingChildTasks.length} pending child task(s). Would you like to start the next child task?`,
+								options: ["Yes, start child task", "No, keep current task active"],
+							} satisfies ClineAskQuestion),
+						)
+
+						if (continueResponse === "messageResponse" && text === "Yes, start child task") {
+							const startNextResponse = await this.startNextChildTask()
+							this.pushToolResult(startNextResponse, block)
+						} else {
+							this.taskState.userMessageContent.push({
+								type: "text",
+								text: `User denied the operation to start the next child task. Pending child tasks: ${this.pendingChildTasks.length}`,
+							})
+						}
+					}
+					await this.saveCheckpoint()
+					break
+				}
+			}
+		}
+	}
+
+	public async startNextChildTask(): Promise<ToolResponse> {
+		if (!this.pendingChildTasks || this.pendingChildTasks.length === 0) {
+			return formatResponse.toolResult("No pending child tasks to execute.")
+		}
+
+		if (this.activeChildTaskId) {
+			return formatResponse.toolResult(
+				`Cannot start new child task. There is already an active child task (ID: ${this.activeChildTaskId}). Please wait for it to complete first.`,
+			)
+		}
+
+		const nextChildTask = this.pendingChildTasks.shift()
+		if (!nextChildTask) {
+			return formatResponse.toolResult("No pending child tasks available.")
+		}
+
+		try {
+			setTimeout(() => {
+				this.initTask(nextChildTask.prompt, undefined, nextChildTask.files, undefined, this.taskId, nextChildTask.id)
+			}, 100)
+			this.status = this.pendingChildTasks.length > 0 ? "paused" : "completed"
+			this.activeChildTaskId = nextChildTask.id
+			await this.messageStateHandler.saveClineMessagesAndUpdateHistory()
+			return formatResponse.toolResult(
+				`Child task started successfully (ID: ${nextChildTask.id}). Parent task is now ${this.status}. Remaining pending tasks: ${this.pendingChildTasks.length}`,
+			)
+		} catch (error) {
+			this.pendingChildTasks.unshift(nextChildTask)
+			const errorMessage = error instanceof Error ? error.message : "Unknown error"
+			return formatResponse.toolError(`Failed to start child task: ${errorMessage}`)
+		}
+	}
+
+	public async executeViewPendingTasksTool(): Promise<ToolResponse> {
+		if (!this.pendingChildTasks || this.pendingChildTasks.length === 0) {
+			return "No pending child tasks."
+		}
+
+		let result = `Pending Child Tasks (${this.pendingChildTasks.length} total):\n\n`
+
+		this.pendingChildTasks.forEach((task, index) => {
+			const createdDate = new Date(task.createdAt).toLocaleString()
+			result += `${index + 1}. Task ID: ${task.id}\n`
+			result += `   Prompt: ${task.prompt.substring(0, 100)}${task.prompt.length > 100 ? "..." : ""}\n`
+			result += `   Created: ${createdDate}\n`
+			if (task.files && task.files.length > 0) {
+				result += `   Files: ${task.files.join(", ")}\n`
+			}
+			result += "\n"
+		})
+
+		if (this.activeChildTaskId) {
+			result += `\nCurrently Active Child Task: ${this.activeChildTaskId}\n`
+			result += `Parent Task Status: ${this.status}\n`
+		}
+
+		return result
+	}
+
+	public async executeNewChildTaskTool(
+		childTaskPrompt: string,
+		childTaskFiles?: string[],
+		executeImmediately: boolean = true,
+	): Promise<ToolResponse> {
+		if (!this.context) {
+			return formatResponse.toolError("Task context is not available to create a child task.")
+		}
+		const childTaskId = Date.now().toString()
+
+		if (executeImmediately) {
+			setTimeout(() => {
+				this.initTask(childTaskPrompt, undefined, childTaskFiles, undefined, this.taskId, childTaskId)
+			}, 0)
+
+			this.childTaskIds.push(childTaskId)
+			this.status = "paused"
+			this.activeChildTaskId = childTaskId
+
+			return formatResponse.toolResult(
+				`Child task created and started immediately (ID: ${childTaskId}). Parent task is now paused and will resume when the child task completes.`,
+			)
+		} else {
+			const childTaskInfo = {
+				id: childTaskId,
+				prompt: childTaskPrompt,
+				files: childTaskFiles,
+				createdAt: Date.now(),
+			}
+			this.pendingChildTasks.push(childTaskInfo)
+
+			this.childTaskIds.push(childTaskId)
+
+			return formatResponse.toolResult(
+				`Child task created and queued for later execution (ID: ${childTaskId}).  There are already ${this.pendingChildTasks.length} pending child tasks, They should be executed before use attempt_completion tool to complete this task.`,
+			)
 		}
 	}
 }

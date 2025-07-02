@@ -140,14 +140,59 @@ export class Task {
 	private postMessageToWebview: (message: ExtensionMessage) => Promise<void>
 	private reinitExistingTaskFromId: (taskId: string) => Promise<void>
 	private cancelTask: () => Promise<void>
-
-	// User chat state
+	private initTask: (
+		task?: string,
+		images?: string[],
+		files?: string[],
+		historyItem?: HistoryItem,
+		parentTaskId?: string,
+		childTaskId?: string,
+	) => void
+	private showTaskWithId: (taskId: string) => void
+	private getTaskWithId: (taskId: string) => Promise<{
+		historyItem: HistoryItem
+		taskDirPath: string
+		apiConversationHistoryFilePath: string
+		uiMessagesFilePath: string
+		contextHistoryFilePath: string
+		taskMetadataFilePath: string
+		apiConversationHistory: Anthropic.MessageParam[]
+	}>
+	private didEditFile: boolean = false
 	autoApprovalSettings: AutoApprovalSettings
 	browserSettings: BrowserSettings
 	chatSettings: ChatSettings
 
 	// Message and conversation state
 	messageStateHandler: MessageStateHandler
+	conversationHistoryDeletedRange?: [number, number]
+	isInitialized = false
+	isAwaitingPlanResponse = false
+	didRespondToPlanAskBySwitchingMode = false
+	// streaming
+	isWaitingForFirstChunk = false
+	isStreaming = false
+	private parentId?: string
+	private childTaskIds: string[] = []
+	private status: HistoryItem["status"] = "running"
+	private activeChildTaskId: string | undefined = undefined
+	private pendingChildTasks: Array<{
+		id: string
+		prompt: string
+		files?: string[]
+		createdAt: number
+	}> = []
+	private currentStreamingContentIndex = 0
+	private assistantMessageContent: AssistantMessageContent[] = []
+	private presentAssistantMessageLocked = false
+	private presentAssistantMessageHasPendingUpdates = false
+	private userMessageContent: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
+	private userMessageContentReady = false
+	private didRejectTool = false
+	private didAlreadyUseTool = false
+	private didCompleteReadingStream = false
+	private didAutomaticallyRetryFailedApiRequest = false
+
 	constructor(
 		context: vscode.ExtensionContext,
 		mcpHub: McpHub,
@@ -157,6 +202,24 @@ export class Task {
 		postMessageToWebview: (message: ExtensionMessage) => Promise<void>,
 		reinitExistingTaskFromId: (taskId: string) => Promise<void>,
 		cancelTask: () => Promise<void>,
+		initTask: (
+			task?: string,
+			images?: string[],
+			files?: string[],
+			historyItem?: HistoryItem,
+			parentTaskId?: string,
+			childTaskId?: string,
+		) => void,
+		showTaskWithId: (taskId: string) => void,
+		getTaskWithId: (taskId: string) => Promise<{
+			historyItem: HistoryItem
+			taskDirPath: string
+			apiConversationHistoryFilePath: string
+			uiMessagesFilePath: string
+			contextHistoryFilePath: string
+			taskMetadataFilePath: string
+			apiConversationHistory: Anthropic.MessageParam[]
+		}>,
 		apiConfiguration: ApiConfiguration,
 		autoApprovalSettings: AutoApprovalSettings,
 		browserSettings: BrowserSettings,
@@ -170,6 +233,8 @@ export class Task {
 		images?: string[],
 		files?: string[],
 		historyItem?: HistoryItem,
+		parentId?: string,
+		childTaskId?: string,
 	) {
 		this.taskState = new TaskState()
 		this.context = context
@@ -180,6 +245,9 @@ export class Task {
 		this.postMessageToWebview = postMessageToWebview
 		this.reinitExistingTaskFromId = reinitExistingTaskFromId
 		this.cancelTask = cancelTask
+		this.showTaskWithId = showTaskWithId
+		this.initTask = initTask
+		this.getTaskWithId = getTaskWithId
 		this.clineIgnoreController = new ClineIgnoreController(cwd)
 		// Initialization moved to startTask/resumeTaskFromHistory
 		this.terminalManager = new TerminalManager()
@@ -208,8 +276,18 @@ export class Task {
 			this.taskId = historyItem.id
 			this.taskIsFavorited = historyItem.isFavorited
 			this.taskState.conversationHistoryDeletedRange = historyItem.conversationHistoryDeletedRange
+			this.conversationHistoryDeletedRange = historyItem.conversationHistoryDeletedRange
+			this.parentId = historyItem.parentId
+			this.status = historyItem.status
+			this.childTaskIds = historyItem.childTaskIds || []
+			this.activeChildTaskId = historyItem.activeChildTaskId
+			this.pendingChildTasks = historyItem.pendingChildTasks || []
 		} else if (task || images || files) {
-			this.taskId = Date.now().toString()
+			this.taskId = childTaskId || Date.now().toString()
+			this.parentId = parentId
+			this.childTaskIds = []
+			this.activeChildTaskId = undefined
+			this.pendingChildTasks = []
 		} else {
 			throw new Error("Either historyItem or task/images must be provided")
 		}
@@ -220,6 +298,7 @@ export class Task {
 			taskState: this.taskState,
 			taskIsFavorited: this.taskIsFavorited,
 			updateTaskHistory: this.updateTaskHistory,
+			getTaskInfo: () => this.getTaskInfo(),
 		})
 
 		// Initialize file context tracker
@@ -307,6 +386,11 @@ export class Task {
 			this.autoApprovalSettings,
 			this.browserSettings,
 			this.chatSettings,
+			this.status,
+			this.pendingChildTasks,
+			this.childTaskIds,
+			this.activeChildTaskId,
+			this.initTask,
 			cwd,
 			this.taskId,
 			this.say.bind(this),
@@ -331,6 +415,19 @@ export class Task {
 			throw new Error("Unable to access extension context")
 		}
 		return context
+	}
+	getTaskInfo() {
+		return {
+			taskId: this.taskId,
+			parentId: this.parentId,
+			childTaskIds: this.childTaskIds,
+			status: this.status,
+			activeChildTaskId: this.activeChildTaskId,
+			pendingChildTasks: this.pendingChildTasks,
+		}
+	}
+	isPaused() {
+		return this.status === "paused"
 	}
 
 	async restoreCheckpoint(messageTs: number, restoreType: ClineCheckpointRestore, offset?: number) {
@@ -835,6 +932,10 @@ export class Task {
 	}
 
 	async say(type: ClineSay, text?: string, images?: string[], files?: string[], partial?: boolean): Promise<undefined> {
+		if (this.isPaused()) {
+			console.log("Cline instance is paused")
+			return
+		}
 		if (this.taskState.abort) {
 			throw new Error("Cline instance aborted")
 		}
@@ -1031,6 +1132,24 @@ export class Task {
 			.reverse()
 			.find((m) => !(m.ask === "resume_task" || m.ask === "resume_completed_task")) // could be multiple resume tasks
 
+		// resume the task from child messages
+		let childResumeText: string | undefined
+		if (this.activeChildTaskId) {
+			const childClineMessages = await getSavedClineMessages(this.getContext(), this.activeChildTaskId)
+			this.status = "running"
+			if (childClineMessages.length > 0) {
+				let completionResult = childClineMessages.find((m) => m.say === "completion_result")
+				if (completionResult) {
+					const { text } = completionResult
+					childResumeText = `Task resuming. Child task completed with result: ${text}.`
+					await this.say("child_task_completed", childResumeText)
+					this.activeChildTaskId = undefined
+					await this.messageStateHandler.saveClineMessagesAndUpdateHistory()
+				}
+			} else {
+				this.activeChildTaskId = undefined
+			}
+		}
 		let askType: ClineAsk
 		if (lastClineMessage?.ask === "completion_result") {
 			askType = "resume_completed_task"
@@ -1051,7 +1170,6 @@ export class Task {
 			responseImages = images
 			responseFiles = files
 		}
-
 		// need to make sure that the api conversation history can be resumed by the api, even if it goes out of sync with cline messages
 
 		const existingApiConversationHistory: Anthropic.Messages.MessageParam[] = await getSavedApiConversationHistory(
@@ -1116,7 +1234,12 @@ export class Task {
 			responseText,
 			hasPendingFileContextWarnings,
 		)
-
+		if (childResumeText) {
+			newUserContent.push({
+				type: "text",
+				text: childResumeText,
+			})
+		}
 		if (taskResumptionMessage !== "") {
 			newUserContent.push({
 				type: "text",
@@ -1162,6 +1285,13 @@ export class Task {
 		let nextUserContent = userContent
 		let includeFileDetails = true
 		while (!this.taskState.abort) {
+			// check if the task is paused
+			if (this.isPaused()) {
+				await pWaitFor(() => !this.isPaused() || this.taskState.abort, { interval: 100 })
+				if (this.taskState.abort) {
+					break
+				}
+			}
 			const didEndLoop = await this.recursivelyMakeClineRequests(nextUserContent, includeFileDetails)
 			includeFileDetails = false // we only need file details the first time
 
@@ -1826,10 +1956,12 @@ export class Task {
 	}
 
 	async presentAssistantMessage() {
-		if (this.taskState.abort) {
+		if (this.taskState.abort && !this.isPaused()) {
 			throw new Error("Cline instance aborted")
 		}
-
+		if (this.isPaused()) {
+			return
+		}
 		if (this.taskState.presentAssistantMessageLocked) {
 			this.taskState.presentAssistantMessageHasPendingUpdates = true
 			return
@@ -1942,6 +2074,13 @@ export class Task {
 	}
 
 	async recursivelyMakeClineRequests(userContent: UserContent, includeFileDetails: boolean = false): Promise<boolean> {
+		if (this.isPaused()) {
+			await pWaitFor(() => !this.isPaused() || this.taskState.abort, { interval: 100 })
+
+			if (this.taskState.abort) {
+				return false
+			}
+		}
 		if (this.taskState.abort) {
 			throw new Error("Cline instance aborted")
 		}
