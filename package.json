@@ -1,6 +1,6 @@
 {
-	"name": "claude-dev",
-	"displayName": "Cline",
+	"name": "super-agent",
+	"displayName": "R2C Agent",
 	"description": "Autonomous coding agent right in your IDE, capable of creating/editing files, running commands, using the browser, and more with your permission every step of the way.",
 	"version": "3.2.0",
 	"icon": "assets/icons/icon.png",
@@ -11,12 +11,12 @@
 		"name": "Cline Bot Inc."
 	},
 	"license": "Apache-2.0",
-	"publisher": "saoudrizwan",
+	"publisher": "qiyefazhan",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/cline/cline"
 	},
-	"homepage": "https://cline.bot",
+	"homepage": "https://super.bot",
 	"categories": [
 		"AI",
 		"Chat",
@@ -101,110 +101,110 @@
 		"viewsContainers": {
 			"activitybar": [
 				{
-					"id": "claude-dev-ActivityBar",
-					"title": "Cline (⌘+')",
+					"id": "super-agent-ActivityBar",
+					"title": "Super R2C (⌘+')",
 					"icon": "assets/icons/icon.svg",
 					"when": "isMac"
 				},
 				{
-					"id": "claude-dev-ActivityBar",
-					"title": "Cline (Ctrl+')",
+					"id": "super-agent-ActivityBar",
+					"title": "Super R2C (Ctrl+')",
 					"icon": "assets/icons/icon.svg",
 					"when": "!isMac"
 				}
 			]
 		},
 		"views": {
-			"claude-dev-ActivityBar": [
+			"super-agent-ActivityBar": [
 				{
 					"type": "webview",
-					"id": "claude-dev.SidebarProvider",
+					"id": "super-agent.SidebarProvider",
 					"name": ""
 				}
 			]
 		},
 		"commands": [
 			{
-				"command": "cline.plusButtonClicked",
+				"command": "super.plusButtonClicked",
 				"title": "New Task",
 				"icon": "$(add)"
 			},
 			{
-				"command": "cline.mcpButtonClicked",
+				"command": "super.mcpButtonClicked",
 				"title": "MCP Servers",
 				"icon": "$(server)"
 			},
 			{
-				"command": "cline.historyButtonClicked",
+				"command": "super.historyButtonClicked",
 				"title": "History",
 				"icon": "$(history)"
 			},
 			{
-				"command": "cline.popoutButtonClicked",
+				"command": "super.popoutButtonClicked",
 				"title": "Open in Editor",
 				"icon": "$(link-external)"
 			},
 			{
-				"command": "cline.accountButtonClicked",
+				"command": "super.accountButtonClicked",
 				"title": "Account",
 				"icon": "$(account)"
 			},
 			{
-				"command": "cline.settingsButtonClicked",
+				"command": "super.settingsButtonClicked",
 				"title": "Settings",
 				"icon": "$(settings-gear)"
 			},
 			{
-				"command": "cline.openInNewTab",
+				"command": "super.openInNewTab",
 				"title": "Open In New Tab",
 				"category": "Cline"
 			},
 			{
-				"command": "cline.dev.createTestTasks",
+				"command": "super.dev.createTestTasks",
 				"title": "Create Test Tasks",
 				"category": "Cline",
-				"when": "cline.isDevMode"
+				"when": "super.isDevMode"
 			},
 			{
-				"command": "cline.addToChat",
+				"command": "super.addToChat",
 				"title": "Add to Cline",
 				"category": "Cline"
 			},
 			{
-				"command": "cline.addTerminalOutputToChat",
+				"command": "super.addTerminalOutputToChat",
 				"title": "Add to Cline",
 				"category": "Cline"
 			},
 			{
-				"command": "cline.focusChatInput",
+				"command": "super.focusChatInput",
 				"title": "Jump to Chat Input",
 				"category": "Cline"
 			},
 			{
-				"command": "cline.generateGitCommitMessage",
+				"command": "super.generateGitCommitMessage",
 				"title": "Generate Commit Message with Cline",
 				"category": "Cline",
 				"icon": "$(robot)"
 			},
 			{
-				"command": "cline.explainCode",
+				"command": "super.explainCode",
 				"title": "Explain with Cline",
 				"category": "Cline"
 			},
 			{
-				"command": "cline.improveCode",
+				"command": "super.improveCode",
 				"title": "Improve with Cline",
 				"category": "Cline"
 			},
 			{
-				"command": "cline.openWalkthrough",
+				"command": "super.openWalkthrough",
 				"title": "Open Walkthrough",
 				"category": "Cline"
 			}
 		],
 		"keybindings": [
 			{
-				"command": "cline.addToChat",
+				"command": "super.addToChat",
 				"key": "cmd+'",
 				"mac": "cmd+'",
 				"win": "ctrl+'",
@@ -212,11 +212,11 @@
 				"when": "editorHasSelection"
 			},
 			{
-				"command": "cline.generateGitCommitMessage",
+				"command": "super.generateGitCommitMessage",
 				"when": "scmProvider == git"
 			},
 			{
-				"command": "cline.focusChatInput",
+				"command": "super.focusChatInput",
 				"key": "cmd+'",
 				"mac": "cmd+'",
 				"win": "ctrl+'",
@@ -227,91 +227,91 @@
 		"menus": {
 			"view/title": [
 				{
-					"command": "cline.plusButtonClicked",
+					"command": "super.plusButtonClicked",
 					"group": "navigation@1",
-					"when": "view == claude-dev.SidebarProvider"
+					"when": "view == super-agent.SidebarProvider"
 				},
 				{
-					"command": "cline.mcpButtonClicked",
+					"command": "super.mcpButtonClicked",
 					"group": "navigation@2",
-					"when": "view == claude-dev.SidebarProvider"
+					"when": "view == super-agent.SidebarProvider"
 				},
 				{
-					"command": "cline.historyButtonClicked",
+					"command": "super.historyButtonClicked",
 					"group": "navigation@3",
-					"when": "view == claude-dev.SidebarProvider"
+					"when": "view == super-agent.SidebarProvider"
 				},
 				{
-					"command": "cline.popoutButtonClicked",
+					"command": "super.popoutButtonClicked",
 					"group": "navigation@4",
-					"when": "view == claude-dev.SidebarProvider"
+					"when": "view == super-agent.SidebarProvider"
 				},
 				{
-					"command": "cline.accountButtonClicked",
+					"command": "super.accountButtonClicked",
 					"group": "navigation@5",
-					"when": "view == claude-dev.SidebarProvider"
+					"when": "view == super-agent.SidebarProvider"
 				},
 				{
-					"command": "cline.settingsButtonClicked",
+					"command": "super.settingsButtonClicked",
 					"group": "navigation@6",
-					"when": "view == claude-dev.SidebarProvider"
+					"when": "view == super-agent.SidebarProvider"
 				}
 			],
 			"editor/title": [
 				{
-					"command": "cline.plusButtonClicked",
+					"command": "super.plusButtonClicked",
 					"group": "navigation@1",
-					"when": "activeWebviewPanelId == claude-dev.TabPanelProvider"
+					"when": "activeWebviewPanelId == super-agent.TabPanelProvider"
 				},
 				{
-					"command": "cline.mcpButtonClicked",
+					"command": "super.mcpButtonClicked",
 					"group": "navigation@2",
-					"when": "activeWebviewPanelId == claude-dev.TabPanelProvider"
+					"when": "activeWebviewPanelId == super-agent.TabPanelProvider"
 				},
 				{
-					"command": "cline.historyButtonClicked",
+					"command": "super.historyButtonClicked",
 					"group": "navigation@3",
-					"when": "activeWebviewPanelId == claude-dev.TabPanelProvider"
+					"when": "activeWebviewPanelId == super-agent.TabPanelProvider"
 				},
 				{
-					"command": "cline.popoutButtonClicked",
+					"command": "super.popoutButtonClicked",
 					"group": "navigation@4",
-					"when": "activeWebviewPanelId == claude-dev.TabPanelProvider"
+					"when": "activeWebviewPanelId == super-agent.TabPanelProvider"
 				},
 				{
-					"command": "cline.accountButtonClicked",
+					"command": "super.accountButtonClicked",
 					"group": "navigation@5",
-					"when": "activeWebviewPanelId == claude-dev.TabPanelProvider"
+					"when": "activeWebviewPanelId == super-agent.TabPanelProvider"
 				},
 				{
-					"command": "cline.settingsButtonClicked",
+					"command": "super.settingsButtonClicked",
 					"group": "navigation@6",
-					"when": "activeWebviewPanelId == claude-dev.TabPanelProvider"
+					"when": "activeWebviewPanelId == super-agent.TabPanelProvider"
 				}
 			],
 			"editor/context": [
 				{
-					"command": "cline.addToChat",
+					"command": "super.addToChat",
 					"group": "navigation",
 					"when": "editorHasSelection"
 				}
 			],
 			"terminal/context": [
 				{
-					"command": "cline.addTerminalOutputToChat",
+					"command": "super.addTerminalOutputToChat",
 					"group": "navigation"
 				}
 			],
 			"scm/title": [
 				{
-					"command": "cline.generateGitCommitMessage",
+					"command": "super.generateGitCommitMessage",
 					"group": "navigation",
 					"when": "scmProvider == git"
 				}
 			],
 			"commandPalette": [
 				{
-					"command": "cline.generateGitCommitMessage",
+					"command": "super.generateGitCommitMessage",
 					"when": "scmProvider == git"
 				}
 			]
