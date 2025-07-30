@@ -28,10 +28,9 @@ export const TaskHierarchy: React.FC<TaskHierarchyProps> = ({ currentTask, allTa
 	}))
 
 	// merge existing child tasks and pending child tasks
-	const childTasks = [...existingChildTasks, ...pendingChildTasks].sort((a, b) => b.ts - a.ts)
+	const childTasks = [...existingChildTasks, ...pendingChildTasks].sort((a, b) => Number(a.id) - Number(b.id))
 	const COLLAPSE_THRESHOLD = 5
 	const COLLAPSED_SHOW_COUNT = 0
-
 	const [isExpanded, setIsExpanded] = useState(() => {
 		return childTasks.length <= COLLAPSE_THRESHOLD
 	})

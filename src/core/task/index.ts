@@ -5394,11 +5394,11 @@ export class Task {
 			return formatResponse.toolResult("No pending child tasks to execute.")
 		}
 
-		if (this.activeChildTaskId) {
-			return formatResponse.toolResult(
-				`Cannot start new child task. There is already an active child task (ID: ${this.activeChildTaskId}). Please wait for it to complete first.`,
-			)
-		}
+		// if (this.activeChildTaskId) {
+		// 	return formatResponse.toolResult(
+		// 		`Cannot start new child task. There is already an active child task (ID: ${this.activeChildTaskId}). Please wait for it to complete first.`,
+		// 	)
+		// }
 
 		const nextChildTask = this.pendingChildTasks.shift()
 		if (!nextChildTask) {
