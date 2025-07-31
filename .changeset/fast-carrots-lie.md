@@ -1,5 +1,5 @@
 ---
-"claude-dev": minor
+"super-agent": minor
 ---
 
 Support child task to make context window simple handling complex tasks.

@@ -1,5 +1,5 @@
 ---
-"claude-dev": patch
+"super-agent": patch
 ---
 
 Prevent reading IS_DEV from the users environment

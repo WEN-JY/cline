@@ -2,7 +2,7 @@
 	"name": "super-agent",
 	"displayName": "R2C Agent",
 	"description": "Autonomous coding agent right in your IDE, capable of creating/editing files, running commands, using the browser, and more with your permission every step of the way.",
-	"version": "3.2.0",
+	"version": "3.2.1",
 	"icon": "assets/icons/icon.png",
 	"engines": {
 		"vscode": "^1.84.0"
@@ -102,14 +102,14 @@
 			"activitybar": [
 				{
 					"id": "super-agent-ActivityBar",
-					"title": "Super R2C (⌘+')",
-					"icon": "assets/icons/icon.svg",
+					"title": "Super Agent (⌘+')",
+					"icon": "assets/icons/logo.png",
 					"when": "isMac"
 				},
 				{
 					"id": "super-agent-ActivityBar",
-					"title": "Super R2C (Ctrl+')",
-					"icon": "assets/icons/icon.svg",
+					"title": "Super Agent (Ctrl+')",
+					"icon": "assets/icons/logo.png",
 					"when": "!isMac"
 				}
 			]

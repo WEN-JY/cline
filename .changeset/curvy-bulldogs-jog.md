@@ -1,5 +1,5 @@
 ---
-"claude-dev": minor
+"super-agent": minor
 ---
 
 Migrate didBecomeVisible to protobus
