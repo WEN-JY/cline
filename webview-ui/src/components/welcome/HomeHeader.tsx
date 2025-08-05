@@ -5,7 +5,7 @@ const HomeHeader = () => {
 	return (
 		<div className="flex flex-col items-center mb-5">
 			<div className="my-5">
-				<ClineLogoVariable className="size-16" />
+				<ClineLogoVariable />
 			</div>
 			<div className="text-center flex items-center justify-center">
 				<h2 className="m-0 text-[var(--vscode-font-size)]">{"What can I do for you?"}</h2>
