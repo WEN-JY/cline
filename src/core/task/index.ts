@@ -3890,45 +3890,45 @@ export class Task {
 
 						if (block.partial) {
 							const partialMessage = JSON.stringify(sharedMessageProps)
-							if (this.shouldAutoApproveTool(block.name)) {
-								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
-								await this.say("tool", partialMessage, undefined, undefined, block.partial)
-							} else {
-								this.removeLastPartialMessageIfExistsWithType("say", "tool")
-								await this.ask("tool", partialMessage, block.partial).catch(() => {})
-							}
+							// if (this.shouldAutoApproveTool(block.name)) {
+							this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+							await this.say("tool", partialMessage, undefined, undefined, block.partial)
+							// } else {
+							// this.removeLastPartialMessageIfExistsWithType("say", "tool")
+							// await this.ask("tool", partialMessage, block.partial).catch(() => {})
+							// }
 							break
 						} else {
 							this.taskState.consecutiveMistakeCount = 0
 
 							const completeMessage = JSON.stringify(sharedMessageProps)
-							if (this.shouldAutoApproveTool(block.name)) {
-								this.removeLastPartialMessageIfExistsWithType("ask", "tool")
-								await this.say("tool", completeMessage, undefined, undefined, false)
-								this.taskState.consecutiveAutoApprovedRequestsCount++
-								telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, true, true)
-							} else {
-								if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
-									showSystemNotification({
-										subtitle: "Approval Required",
-										message: `Cline wants to view pending child tasks`,
-									})
-								}
-								this.removeLastPartialMessageIfExistsWithType("say", "tool")
-								const didApprove = await askApproval("tool", completeMessage)
-								if (!didApprove) {
-									telemetryService.captureToolUsage(
-										this.taskId,
-										block.name,
-										this.api.getModel().id,
-										false,
-										false,
-									)
-									await this.saveCheckpoint()
-									break
-								}
-								telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, true)
-							}
+							// if (this.shouldAutoApproveTool(block.name)) {
+							this.removeLastPartialMessageIfExistsWithType("ask", "tool")
+							await this.say("tool", completeMessage, undefined, undefined, false)
+							this.taskState.consecutiveAutoApprovedRequestsCount++
+							telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, true, true)
+							// } else {
+							// 	if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
+							// 		showSystemNotification({
+							// 			subtitle: "Approval Required",
+							// 			message: `Cline wants to view pending child tasks`,
+							// 		})
+							// 	}
+							// 	this.removeLastPartialMessageIfExistsWithType("say", "tool")
+							// 	const didApprove = await askApproval("tool", completeMessage)
+							// 	if (!didApprove) {
+							// 		telemetryService.captureToolUsage(
+							// 			this.taskId,
+							// 			block.name,
+							// 			this.api.getModel().id,
+							// 			false,
+							// 			false,
+							// 		)
+							// 		await this.saveCheckpoint()
+							// 		break
+							// 	}
+							// 	telemetryService.captureToolUsage(this.taskId, block.name, this.api.getModel().id, false, true)
+							// }
 
 							const toolResponse = await this.executeViewPendingTasksTool()
 							const isClaude4Model = await isClaude4ModelFamily(this.api)
