@@ -274,7 +274,7 @@ Important Notes:
 Parameters:
 - child_task_prompt: (required) task description or command to execute.
 - child_task_files: (optional) files related to the child task. This is a list of paths to files.
-- execute_immediately: (optional) default is true. if execute_immediately is true, the child task will be executed immediately. if execute_immediately is false, the child task will be created in the parent's pending child task queue but not executed immediately.
+- execute_immediately: (optional) default is false. if execute_immediately is true, the child task will be executed immediately. if execute_immediately is false, the child task will be created in the parent's pending child task queue but not executed immediately.
 Usage:
 <new_child_task>
 <child_task_prompt>detail of the child task or command to execute</child_task_prompt>
