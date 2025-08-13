@@ -1,7 +1,7 @@
 import * as path from "path"
 import * as os from "os"
 import * as vscode from "vscode"
-import { arePathsEqual } from "@utils/path"
+import { arePathsEqual, getWorkspacePath } from "@utils/path"
 
 export async function openImage(dataUri: string) {
 	const matches = dataUri.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/)
@@ -20,9 +20,25 @@ export async function openImage(dataUri: string) {
 	}
 }
 
-export async function openFile(absolutePath: string) {
+export async function openFile(filePath: string) {
 	try {
-		const uri = vscode.Uri.file(absolutePath)
+		// Resolve the path to an absolute path
+		let resolvedPath: string
+
+		if (path.isAbsolute(filePath)) {
+			// Already an absolute path
+			resolvedPath = filePath
+		} else {
+			// Relative path - resolve it relative to the workspace root
+			const workspacePath = getWorkspacePath()
+			if (!workspacePath) {
+				vscode.window.showErrorMessage("No workspace folder found. Cannot resolve relative path.")
+				return
+			}
+			resolvedPath = path.resolve(workspacePath, filePath)
+		}
+
+		const uri = vscode.Uri.file(resolvedPath)
 
 		// Check if the document is already open in a tab group that's not in the active editor's column. If it is, then close it (if not dirty) so that we don't duplicate tabs
 		try {
@@ -44,6 +60,6 @@ export async function openFile(absolutePath: string) {
 		const document = await vscode.workspace.openTextDocument(uri)
 		await vscode.window.showTextDocument(document, { preview: false })
 	} catch (error) {
-		vscode.window.showErrorMessage(`Could not open file!`)
+		vscode.window.showErrorMessage(`Could not open file: ${error instanceof Error ? error.message : String(error)}`)
 	}
 }

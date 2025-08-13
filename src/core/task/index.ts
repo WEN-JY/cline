@@ -4434,6 +4434,8 @@ export class Task {
 							}
 						}
 
+						// set status to completed, this is the last tool block in the task
+						this.status = "completed"
 						try {
 							const lastMessage = this.messageStateHandler.getClineMessages().at(-1)
 							if (block.partial) {
@@ -4482,8 +4484,6 @@ export class Task {
 									break
 								}
 								this.taskState.consecutiveMistakeCount = 0
-								// set status to completed, this is the last tool block in the task
-								this.status = "completed"
 								if (this.autoApprovalSettings.enabled && this.autoApprovalSettings.enableNotifications) {
 									showSystemNotification({
 										subtitle: "Task Completed",
